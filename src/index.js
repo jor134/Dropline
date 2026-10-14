@@ -9,6 +9,9 @@
 //
 // Data: Ontario Land Information Ontario (LIO) open data, Open Government Licence – Ontario.
 
+import { getVapid, sendPush } from './push.js';
+import { SP, SPECIES, MONTHS, estWeightKg, computeGuide, fetchWeather, readWeather, matchSpecies, dist, bearing, compass, speciesFromAra } from '../public/guide.js';
+
 const LIO = 'https://ws.lioservices.lrc.gov.on.ca/arcgis2/rest/services/LIO_OPEN_DATA';
 const LAYER = {
   ara: `${LIO}/LIO_Open07/MapServer/2`,       // ARA Water Poly Segment: lake facts + fish species
@@ -41,13 +44,28 @@ export default {
       if (!env.DB) return json({ error: 'Server not configured: D1 database binding "DB" missing.' }, 500);
       await ensureSchema(env.DB);
       if (path === '/api/catches' && request.method === 'GET') return await listCatches(env.DB, url);
-      if (path === '/api/catches' && request.method === 'POST') return await addCatch(env.DB, request);
+      if (path === '/api/catches' && request.method === 'POST') {
+        const r = await addCatch(env.DB, await request.json());
+        if (r.ok && r.c.isNew) ctx.waitUntil(notifyCatch(env, r.c).catch(() => {}));
+        return json(r.ok ? { ok: true, id: r.c.id } : { error: r.error }, r.ok ? 200 : r.status);
+      }
+      if (path === '/api/push/key') return json({ key: (await getVapid(env.DB)).pub });
+      if (path === '/api/push/subscribe' && request.method === 'POST') return await pushSubscribe(env, request, url);
+      if (path === '/api/push/unsubscribe' && request.method === 'POST') { const b = await request.json(); await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(String(b.endpoint || '')).run(); return json({ ok: true }); }
+      if (path === '/api/push/test' && request.method === 'POST') return await pushTest(env, request);
+      if (path === '/api/quick/catch' && request.method === 'POST') return await quickCatch(env, request, ctx);
+      if (path === '/api/quick/where') return await quickWhere(env, request, url, ctx);
       if (path.startsWith('/api/catches/') && request.method === 'DELETE') return await deleteCatch(env.DB, path.slice(13), request);
       if (path.startsWith('/api/photo/')) return await getPhoto(env.DB, path.slice(11));
       return json({ error: 'Not found' }, 404);
     } catch (err) {
       return json({ error: String(err && err.message || err) }, 500);
     }
+  },
+  async scheduled(event, env, ctx) {
+    if (!env.DB) return;
+    await ensureSchema(env.DB);
+    ctx.waitUntil(weatherAlerts(env));
   },
 };
 
@@ -164,17 +182,22 @@ function haversine(lat1, lng1, lat2, lng2) {
 // ---------- lake bundle ----------
 async function lakeBundle(lid, request, ctx) {
   if (!/^[0-9A-Za-z-]{5,20}$/.test(lid)) return json({ error: 'Bad lake id' }, 400);
+  const b = await lakeBundleData(lid, ctx);
+  if (!b) return json({ error: 'Lake not found' }, 404);
+  return json(b);
+}
+async function lakeBundleData(lid, ctx) {
   const cache = caches.default;
   const cacheKey = new Request(`https://dropline.cache/lake/${BUNDLE_VERSION}/${lid}`);
   const hit = await cache.match(cacheKey);
-  if (hit) return new Response(hit.body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-cache': 'hit' } });
+  if (hit) return hit.json();
 
   const warnings = [];
   const ara = await arcQuery(LAYER.ara, {
     where: `WATERBODY_LID='${sqlStr(lid)}'`, outFields: '*', returnGeometry: 'true', maxAllowableOffset: '0.00004',
   });
   const feats = ara.features || [];
-  if (!feats.length) return json({ error: 'Lake not found' }, 404);
+  if (!feats.length) return null;
 
   // merge facts from the most recently updated record, species from all
   feats.sort((a, b) => (b.properties.EFFECTIVE_DATETIME || 0) - (a.properties.EFFECTIVE_DATETIME || 0));
@@ -263,11 +286,10 @@ async function lakeBundle(lid, request, ctx) {
     comments: a.COMMENTS || null, species: [...species].sort(),
     bbox: bb.map(r5), outline: polys, contours, depthUnit, access, activity, warnings,
   };
-  const body = JSON.stringify(bundle);
   if (!warnings.length) {
-    ctx.waitUntil(cache.put(cacheKey, new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=604800' } })));
+    ctx.waitUntil(cache.put(cacheKey, new Response(JSON.stringify(bundle), { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=604800' } })));
   }
-  return new Response(body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+  return bundle;
 }
 
 // ---------- fish photos (Wikipedia lead images, Wikimedia Commons licences) ----------
@@ -360,6 +382,10 @@ async function ensureSchema(db) {
       bait TEXT, notes TEXT, released INTEGER, caught_at INTEGER, created_at INTEGER, has_photo INTEGER)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS photos (id TEXT PRIMARY KEY, mime TEXT, data TEXT)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_catches_lid ON catches(lid)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, p256dh TEXT, auth TEXT, angler TEXT,
+      lakes TEXT, catches INTEGER, weather INTEGER, created_at INTEGER, updated_at INTEGER)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY, sent_at INTEGER)`),
   ]);
   schemaReady = true;
 }
@@ -374,27 +400,33 @@ async function listCatches(db, url) {
   return json({ catches: results });
 }
 
-async function addCatch(db, request) {
-  const b = await request.json();
-  const str = (v, n) => (v == null ? null : String(v).slice(0, n));
+// returns { ok, c } or { ok:false, status, error }
+async function addCatch(db, b) {
+  const str = (v, n) => (v == null || v === '' ? null : String(v).slice(0, n));
   const num = v => (v === '' || v == null || !isFinite(+v) ? null : +v);
-  if (!b.id || !/^[\w-]{8,64}$/.test(b.id)) return json({ error: 'Bad id' }, 400);
-  if (!b.species || !b.angler) return json({ error: 'Species and angler are required' }, 400);
+  if (!b.id || !/^[\w-]{8,64}$/.test(b.id)) return { ok: false, status: 400, error: 'Bad id' };
+  if (!b.species || !b.angler) return { ok: false, status: 400, error: 'Species and angler are required' };
   let hasPhoto = 0;
   const stmts = [];
   if (b.photo) {
     const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(b.photo);
-    if (!m) return json({ error: 'Bad photo' }, 400);
-    if (m[2].length > MAX_PHOTO_CHARS) return json({ error: 'Photo too large' }, 413);
+    if (!m) return { ok: false, status: 400, error: 'Bad photo' };
+    if (m[2].length > MAX_PHOTO_CHARS) return { ok: false, status: 413, error: 'Photo too large' };
     stmts.push(db.prepare('INSERT OR IGNORE INTO photos (id, mime, data) VALUES (?, ?, ?)').bind(b.id, m[1], m[2]));
     hasPhoto = 1;
   }
+  const c = {
+    id: b.id, lid: str(b.lid, 20), lake: str(b.lake, 100), species: str(b.species, 40), angler: str(b.angler, 40),
+    lat: num(b.lat), lng: num(b.lng), length_cm: num(b.length_cm), weight_kg: num(b.weight_kg), weight_est: b.weight_est ? 1 : 0,
+    depth_m: num(b.depth_m), bait: str(b.bait, 120), notes: str(b.notes, 1000), released: b.released ? 1 : 0,
+    caught_at: num(b.caught_at) || Date.now(), created_at: Date.now(), has_photo: hasPhoto,
+  };
+  const exists = await db.prepare('SELECT 1 FROM catches WHERE id = ?').bind(c.id).first();
   stmts.push(db.prepare(`INSERT OR IGNORE INTO catches (${CATCH_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(
-    b.id, str(b.lid, 20), str(b.lake, 100), str(b.species, 40), str(b.angler, 40),
-    num(b.lat), num(b.lng), num(b.length_cm), num(b.weight_kg), b.weight_est ? 1 : 0, num(b.depth_m),
-    str(b.bait, 120), str(b.notes, 1000), b.released ? 1 : 0, num(b.caught_at) || Date.now(), Date.now(), hasPhoto));
+    ...CATCH_COLS.split(',').map(k => c[k])));
   await db.batch(stmts);
-  return json({ ok: true, id: b.id });
+  c.isNew = !exists;
+  return { ok: true, c };
 }
 
 async function deleteCatch(db, id, request) {
@@ -414,4 +446,181 @@ async function getPhoto(db, id) {
   if (!row) return new Response('Not found', { status: 404 });
   const bin = Uint8Array.from(atob(row.data), c => c.charCodeAt(0));
   return new Response(bin, { headers: { 'content-type': row.mime, 'cache-control': 'private, max-age=31536000, immutable' } });
+}
+
+// ---------- notifications ----------
+const text = (body, status = 200) => new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+const torontoNow = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Toronto', hour: 'numeric', month: 'numeric', hourCycle: 'h23' })
+    .formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { hour: +p.hour, month: +p.month };
+};
+async function pushSubject(env) {
+  const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'origin'").first();
+  return row ? row.value : 'mailto:dropline@example.com';
+}
+
+async function pushSubscribe(env, request, url) {
+  const b = await request.json();
+  if (!b.endpoint || !/^https:\/\//.test(b.endpoint) || !b.keys || !b.keys.p256dh || !b.keys.auth) return json({ error: 'Bad subscription' }, 400);
+  const lakes = (Array.isArray(b.lakes) ? b.lakes : []).slice(0, 30).map(l => ({
+    lid: String(l.lid).slice(0, 20), name: String(l.name || '').slice(0, 100), lat: +l.lat, lng: +l.lng }));
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('origin', ?)").bind(url.origin),
+    env.DB.prepare(`INSERT INTO push_subs (endpoint, p256dh, auth, angler, lakes, catches, weather, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, angler=excluded.angler,
+      lakes=excluded.lakes, catches=excluded.catches, weather=excluded.weather, updated_at=excluded.updated_at`)
+      .bind(b.endpoint, b.keys.p256dh, b.keys.auth, String(b.angler || '').slice(0, 40), JSON.stringify(lakes),
+        b.prefs && b.prefs.catches === false ? 0 : 1, b.prefs && b.prefs.weather === false ? 0 : 1, Date.now(), Date.now()),
+  ]);
+  return json({ ok: true, lakes: lakes.length });
+}
+
+async function pushTest(env, request) {
+  const b = await request.json();
+  const sub = await env.DB.prepare('SELECT * FROM push_subs WHERE endpoint = ?').bind(String(b.endpoint || '')).first();
+  if (!sub) return json({ error: 'Turn alerts on first' }, 404);
+  const r = await sendPush(sub, { title: 'Dropline alerts are on', body: 'You’ll hear about crew catches and weather on your saved lakes.', url: '/', tag: 'test' },
+    await getVapid(env.DB), await pushSubject(env));
+  if (r === 'gone') await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(sub.endpoint).run();
+  return r === 'ok' ? json({ ok: true }) : json({ error: 'The notification service refused the test. Try turning alerts off and on again.' }, 502);
+}
+
+async function fanOut(env, subs, payload) {
+  if (!subs.length) return;
+  const vapid = await getVapid(env.DB), subject = await pushSubject(env);
+  const results = await Promise.allSettled(subs.map(s => sendPush(s, payload, vapid, subject)));
+  const gone = subs.filter((s, i) => results[i].status === 'fulfilled' && results[i].value === 'gone');
+  if (gone.length) await env.DB.batch(gone.map(s => env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(s.endpoint)));
+}
+
+async function notifyCatch(env, c) {
+  if (!c.lid) return;
+  const { results } = await env.DB.prepare(`SELECT * FROM push_subs WHERE catches = 1 AND lakes LIKE ?`).bind(`%"lid":"${c.lid}"%`).all();
+  const subs = results.filter(s => (s.angler || '').toLowerCase() !== (c.angler || '').toLowerCase());
+  const sp = SP[c.species];
+  const what = `${c.length_cm ? Math.round(c.length_cm) + ' cm ' : ''}${sp ? sp.n.toLowerCase() : c.species}`;
+  await fanOut(env, subs, {
+    title: `${c.angler} caught a ${what}`,
+    body: [c.lake, c.released ? 'released' : null, c.depth_m ? `${c.depth_m} m deep` : null, c.bait].filter(Boolean).join(' · '),
+    url: `/?lake=${encodeURIComponent(c.lid)}&view=log`, tag: `catch-${c.id}`,
+  });
+}
+
+async function weatherAlerts(env) {
+  const { hour } = torontoNow();
+  if (hour < 6 || hour > 20) return; // quiet hours
+  const { results } = await env.DB.prepare('SELECT * FROM push_subs WHERE weather = 1').all();
+  const lakes = new Map();
+  for (const s of results) for (const l of JSON.parse(s.lakes || '[]')) {
+    if (!isFinite(l.lat) || !isFinite(l.lng)) continue;
+    if (!lakes.has(l.lid)) lakes.set(l.lid, { ...l, subs: [] });
+    lakes.get(l.lid).subs.push(s);
+  }
+  for (const lake of [...lakes.values()].slice(0, 40)) {
+    let raw;
+    try { raw = await fetchWeather(lake.lat, lake.lng); } catch (e) { continue; }
+    const h = raw.hourly, off = (raw.utc_offset_seconds || 0) * 1000, now = Date.now();
+    let i = h.time.findIndex(t => Date.parse(t + 'Z') - off > now) - 1;
+    if (i < 0) continue;
+    const next = n => h.time.slice(i, i + n + 1).map((t, k) => ({ t, p: h.pressure_msl[i + k], g: h.wind_gusts_10m[i + k] }));
+    const six = next(6);
+    const drop = six[0].p - Math.min(...six.map(x => x.p));
+    const gust = six.reduce((m, x) => (x.g > m.g ? x : m), six[0]);
+    const alerts = [];
+    if (drop >= 3) alerts.push({ type: 'pressure', title: `Pressure dropping on ${lake.name}`,
+      body: `Down about ${drop.toFixed(0)} hPa over the next few hours. Angler rule of thumb: fish often feed harder ahead of a front.` });
+    if (gust.g >= 40) alerts.push({ type: 'gusts', urgent: true, title: `Strong gusts on ${lake.name}`,
+      body: `Gusts up to ${Math.round(gust.g)} km/h around ${gust.t.slice(11, 16)}. Rough water for small boats — plan to be off the lake.` });
+    for (const a of alerts) {
+      const key = `${lake.lid}:${a.type}`;
+      const last = await env.DB.prepare('SELECT sent_at FROM alerts WHERE key = ?').bind(key).first();
+      if (last && now - last.sent_at < 12 * 3600e3) continue;
+      await env.DB.prepare('INSERT OR REPLACE INTO alerts (key, sent_at) VALUES (?, ?)').bind(key, now).run();
+      await fanOut(env, lake.subs, { ...a, url: `/?lake=${encodeURIComponent(lake.lid)}&view=map`, tag: `${a.type}-${lake.lid}` });
+    }
+  }
+}
+
+// ---------- Apple Watch shortcuts ----------
+async function detectLake(lat, lng) {
+  const d = await arcQuery(LAYER.ara, {
+    where: 'OFFICIAL_WATERBODY_NAME IS NOT NULL', outFields: 'OFFICIAL_WATERBODY_NAME,WATERBODY_LID', returnGeometry: 'true',
+    maxAllowableOffset: '0.0002', geometry: `${lng},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects', distance: '400', units: 'esriSRUnit_Meter', resultRecordCount: '20',
+  }, 3600);
+  const fs = (d.features || []).filter(f => f.properties && f.properties.WATERBODY_LID);
+  if (!fs.length) return null;
+  const inside = fs.find(f => polysOf(f.geometry).some(rings => inPolygon([lng, lat], rings)));
+  const f = inside || fs[0];
+  return { lid: f.properties.WATERBODY_LID, name: f.properties.OFFICIAL_WATERBODY_NAME, onShore: !inside };
+}
+async function readBody(request) {
+  const t = request.headers.get('content-type') || '';
+  if (t.includes('application/json')) return request.json();
+  if (t.includes('form')) return Object.fromEntries(await request.formData());
+  try { return JSON.parse(await request.text()); } catch (e) { return {}; }
+}
+const yes = v => /^(y|yes|true|1|released|release)/i.test(String(v || '').trim());
+const firstNum = v => { const m = String(v ?? '').replace(',', '.').match(/\d+(\.\d+)?/); return m ? +m[0] : null; };
+const metres = d => d < 1000 ? `${Math.round(d / 10) * 10} metres` : `${(d / 1000).toFixed(1)} kilometres`;
+const COMPASS_WORDS = { N: 'north', NE: 'north-east', E: 'east', SE: 'south-east', S: 'south', SW: 'south-west', W: 'west', NW: 'north-west' };
+
+async function quickCatch(env, request, ctx) {
+  const b = await readBody(request);
+  const sp = matchSpecies(b.species);
+  if (!sp) return text(`I didn't recognise "${String(b.species || '').slice(0, 40)}". Try walleye, pike, bass, perch, crappie or trout.`, 400);
+  const angler = String(b.angler || b.name || '').trim();
+  if (!angler) return text('Add your name to the shortcut first.', 400);
+  const lat = firstNum(b.lat ?? b.latitude), lng = b.lng ?? b.longitude;
+  const lngN = lng == null ? null : parseFloat(String(lng).replace(',', '.'));
+  let lake = null;
+  if (lat != null && isFinite(lngN)) { try { lake = await detectLake(lat, lngN); } catch (e) {} }
+  const len = firstNum(b.length ?? b.length_cm);
+  const est = len ? estWeightKg(sp.k, len) : null;
+  const r = await addCatch(env.DB, {
+    id: crypto.randomUUID(), lid: lake && lake.lid, lake: lake ? lake.name : null, species: sp.k, angler,
+    lat, lng: lngN, length_cm: len, weight_kg: est ? Math.round(est.kg * 100) / 100 : null, weight_est: !!est,
+    depth_m: firstNum(b.depth), bait: b.bait ? String(b.bait) : null, notes: b.notes ? String(b.notes) : 'Logged from Apple Watch',
+    released: yes(b.released), caught_at: Date.now(),
+  });
+  if (!r.ok) return text(r.error, r.status);
+  ctx.waitUntil(notifyCatch(env, r.c).catch(() => {}));
+  let msg = `Logged ${len ? Math.round(len) + ' centimetre ' : ''}${sp.n.toLowerCase()}`;
+  msg += lake ? ` on ${lake.name}.` : '. I couldn’t tell which lake you’re on, so it’s saved without one.';
+  if (est) msg += ` About ${est.kg.toFixed(1)} kilos.`;
+  if (sp.protected) msg += ' This one’s protected — please release it.';
+  return text(msg);
+}
+
+async function quickWhere(env, request, url, ctx) {
+  const lat = firstNum(url.searchParams.get('lat')), lngS = url.searchParams.get('lng');
+  const lng = lngS == null ? NaN : parseFloat(lngS.replace(',', '.'));
+  if (lat == null || !isFinite(lng)) return text('I need your location. Check the shortcut has Get Current Location.', 400);
+  const lake = await detectLake(lat, lng).catch(() => null);
+  if (!lake) return text('You don’t seem to be on a mapped Ontario lake.');
+  const bundle = await lakeBundleData(lake.lid, ctx);
+  if (!bundle) return text(`I found ${lake.name} but couldn’t load its map.`);
+  const { results: catches } = await env.DB.prepare('SELECT species, lat, lng FROM catches WHERE lid = ?').bind(lake.lid).all();
+  let sp = matchSpecies(url.searchParams.get('species'));
+  if (!sp) {
+    const counts = {}; for (const c of catches) counts[c.species] = (counts[c.species] || 0) + 1;
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    sp = top ? SP[top[0]] : (bundle.species.map(speciesFromAra).find(s => s && !s.protected) || SP.walleye);
+  }
+  let wx = null;
+  try { wx = readWeather(await fetchWeather(lat, lng)); } catch (e) {}
+  const { month } = torontoNow();
+  const g = computeGuide(bundle, sp.k, month, wx, catches);
+  const parts = [`${sp.n} on ${bundle.name} in ${['January','February','March','April','May','June','July','August','September','October','November','December'][month - 1]}.`];
+  if (g.closed || !g.range) parts.push(g.notes[0] || 'No guide for this one right now.');
+  else {
+    parts.push(`Fish ${g.range[0]} to ${g.range[1]} metres.`);
+    const me = { lat, lng };
+    const near = g.spots.map(s => ({ ...s, d: dist(me, s) })).sort((a, b) => a.d - b.d)[0];
+    if (near) parts.push(`Nearest likely spot: ${metres(near.d)} ${COMPASS_WORDS[compass(bearing(me, near))]}, ${near.depth} metres, ${near.why}.`);
+    else parts.push(g.tip);
+  }
+  if (wx) parts.push(`Wind ${Math.round(wx.wind)} km/h from the ${COMPASS_WORDS[compass(wx.windDir)]}. Pressure ${wx.trend <= -1 ? 'falling' : wx.trend >= 1.5 ? 'rising fast' : 'steady'}.`);
+  return text(parts.join(' '));
 }
