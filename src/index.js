@@ -105,9 +105,9 @@ function safeEqual(a, b) {
 const sqlStr = s => String(s).replace(/'/g, "''");
 const r5 = n => Math.round(n * 1e5) / 1e5;
 
-async function arcQuery(layerUrl, params, ttl = 86400) {
+async function arcQuery(layerUrl, params, ttl = 86400, timeoutMs = 0) {
   const p = new URLSearchParams({ f: 'geojson', outSR: '4326', ...params });
-  const res = await fetch(`${layerUrl}/query?${p}`, { cf: { cacheTtl: ttl, cacheEverything: true } });
+  const res = await fetch(`${layerUrl}/query?${p}`, { cf: { cacheTtl: ttl, cacheEverything: true }, ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
   if (!res.ok) throw new Error(`Ontario data service error ${res.status}`);
   const data = await res.json();
   if (data.error) throw new Error(`Ontario data service: ${data.error.message || 'query failed'}`);
@@ -206,11 +206,12 @@ async function lakeBundle(lid, request, ctx) {
   if (!b) return json({ error: 'Lake not found' }, 404);
   return json(b);
 }
-async function lakeBundleData(lid, ctx) {
+async function lakeBundleData(lid, ctx, cachedOnly = false) {
   const cache = caches.default;
   const cacheKey = new Request(`https://dropline.cache/lake/${BUNDLE_VERSION}/${lid}`);
   const hit = await cache.match(cacheKey);
   if (hit) return hit.json();
+  if (cachedOnly) return null;
 
   const warnings = [];
   const ara = await arcQuery(LAYER.ara, {
@@ -601,18 +602,21 @@ async function weatherAlerts(env) {
 }
 
 // ---------- Apple Watch shortcuts ----------
+// Fast lake lookup for the watch: attributes only, no outlines. First "am I on a lake", then "which lake is close".
 async function detectLake(lat, lng) {
-  const d = await arcQuery(LAYER.ara, {
-    where: 'OFFICIAL_WATERBODY_NAME IS NOT NULL', outFields: 'OFFICIAL_WATERBODY_NAME,WATERBODY_LID', returnGeometry: 'true',
-    maxAllowableOffset: '0.0002', geometry: `${lng},${lat}`, geometryType: 'esriGeometryPoint', inSR: '4326',
-    spatialRel: 'esriSpatialRelIntersects', distance: '400', units: 'esriSRUnit_Meter', resultRecordCount: '20',
-  }, 3600);
-  const fs = (d.features || []).filter(f => f.properties && f.properties.WATERBODY_LID);
-  if (!fs.length) return null;
-  const inside = fs.find(f => polysOf(f.geometry).some(rings => inPolygon([lng, lat], rings)));
-  const f = inside || fs[0];
-  return { lid: f.properties.WATERBODY_LID, name: f.properties.OFFICIAL_WATERBODY_NAME, onShore: !inside };
+  const la = lat.toFixed(4), ln = lng.toFixed(4);
+  const base = { outFields: 'OFFICIAL_WATERBODY_NAME,WATERBODY_LID,MAXIMUM_DEPTH,SECCHI_DEPTH,FISH_SPECIES_SUMMARY', returnGeometry: 'false',
+    geometry: `${ln},${la}`, geometryType: 'esriGeometryPoint', inSR: '4326', spatialRel: 'esriSpatialRelIntersects', resultRecordCount: '5',
+    where: 'OFFICIAL_WATERBODY_NAME IS NOT NULL' };
+  const pick = d => (d.features || []).map(f => f.properties).find(p => p && p.WATERBODY_LID);
+  let p = pick(await arcQuery(LAYER.ara, base, 86400, 5000));
+  let onShore = false;
+  if (!p) { p = pick(await arcQuery(LAYER.ara, { ...base, distance: '400', units: 'esriSRUnit_Meter' }, 86400, 5000)); onShore = true; }
+  if (!p) return null;
+  return { lid: p.WATERBODY_LID, name: p.OFFICIAL_WATERBODY_NAME, onShore, maxDepth: p.MAXIMUM_DEPTH, secchi: p.SECCHI_DEPTH,
+    species: String(p.FISH_SPECIES_SUMMARY || '').split(',').map(x => x.trim()).filter(Boolean) };
 }
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 async function readBody(request) {
   const t = request.headers.get('content-type') || '';
   if (t.includes('application/json')) return request.json();
@@ -656,20 +660,28 @@ async function quickWhere(env, request, url, ctx) {
   const lng = lngS == null ? NaN : parseFloat(lngS.replace(',', '.'));
   if (lat == null || !isFinite(lng)) return text('I need your location. Check the shortcut has Get Current Location.', 400);
   const lake = await detectLake(lat, lng).catch(() => null);
-  if (!lake) return text('You don’t seem to be on a mapped Ontario lake.');
-  const bundle = await lakeBundleData(lake.lid, ctx);
-  if (!bundle) return text(`I found ${lake.name} but couldn’t load its map.`);
-  const { results: catches } = await env.DB.prepare('SELECT species, lat, lng FROM catches WHERE lid = ?').bind(lake.lid).all();
+  if (!lake) return text('You don’t seem to be on a mapped Ontario lake, or the lake service is slow right now. Try again in a minute.');
+  // Only use a depth map that's already cached; building one can take 30 seconds, far longer than a watch waits.
+  let bundle = await lakeBundleData(lake.lid, ctx, true);
+  const mapPending = !bundle;
+  if (mapPending) {
+    ctx.waitUntil(lakeBundleData(lake.lid, ctx).catch(() => {}));
+    bundle = { name: lake.name, maxDepth: lake.maxDepth, secchi: lake.secchi, species: lake.species,
+      contours: [], activity: [], access: [], bbox: [lng, lat, lng, lat] };
+  }
+  const [{ results: catches }, wxRaw] = await Promise.all([
+    env.DB.prepare('SELECT species, lat, lng FROM catches WHERE lid = ?').bind(lake.lid).all(),
+    withTimeout(fetchWeather(lat, lng), 4000).catch(() => null),
+  ]);
   let sp = matchSpecies(url.searchParams.get('species'));
   if (!sp) {
     const counts = {}; for (const c of catches) counts[c.species] = (counts[c.species] || 0) + 1;
     const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
     sp = top ? SP[top[0]] : (bundle.species.map(speciesFromAra).find(s => s && !s.protected) || SP.walleye);
   }
-  let wx = null;
-  try { wx = readWeather(await fetchWeather(lat, lng)); } catch (e) {}
+  const wx = wxRaw ? readWeather(wxRaw) : null;
   const { month } = torontoNow();
-  const g = computeGuide(bundle, sp.k, month, wx, catches);
+  const g = computeGuide(bundle, sp.k, month, wx, catches, { maxCandidates: 6000 });
   const parts = [`${sp.n} on ${bundle.name} in ${['January','February','March','April','May','June','July','August','September','October','November','December'][month - 1]}.`];
   if (g.closed || !g.range) parts.push(g.notes[0] || 'No guide for this one right now.');
   else {
@@ -678,6 +690,7 @@ async function quickWhere(env, request, url, ctx) {
     const near = g.spots.map(s => ({ ...s, d: dist(me, s) })).sort((a, b) => a.d - b.d)[0];
     if (near) parts.push(`Nearest likely spot: ${metres(near.d)} ${COMPASS_WORDS[compass(bearing(me, near))]}, ${near.depth} metres, ${near.why}.`);
     else parts.push(g.tip);
+    if (mapPending) parts.push('I’m loading this lake’s depth map now — ask again in a minute for exact spots.');
   }
   if (wx) parts.push(`Wind ${Math.round(wx.wind)} km/h from the ${COMPASS_WORDS[compass(wx.windDir)]}. Pressure ${wx.trend <= -1 ? 'falling' : wx.trend >= 1.5 ? 'rising fast' : 'steady'}.`);
   return text(parts.join(' '));
