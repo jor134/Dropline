@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dropline</title>
+<meta name="description" content="Family fishing companion for Ontario lakes">
+<meta name="theme-color" content="#1F3A2C">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Dropline">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{
+  --granite:#EEF0EC; --paper:#FFFFFF; --pine:#1F3A2C; --pine-2:#3E5A4A; --rule:#CBD3CC;
+  --shallow:#D7ECF0; --mid:#7FB3C8; --deep:#0E3B5C;
+  --lure:#F05A1A; --chart:#B8D400; --warn:#B3261E; --ok:#2F7D4F;
+  --r:14px; --tap:52px;
+  --safe-b:env(safe-area-inset-bottom,0px); --safe-t:env(safe-area-inset-top,0px);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--granite);color:var(--pine);
+  font-family:"Atkinson Hyperlegible",system-ui,-apple-system,Segoe UI,sans-serif;font-size:17px;line-height:1.45;
+  -webkit-tap-highlight-color:transparent}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--lure);outline-offset:2px}
+h1,h2,h3{line-height:1.15;margin:0}
+h1{font-size:1.9rem} h2{font-size:1.35rem} h3{font-size:1.08rem}
+p{margin:.4em 0}
+a{color:var(--deep)}
+.muted{color:var(--pine-2)}
+.small{font-size:.86rem}
+.hidden{display:none!important}
+
+/* app frame */
+#app{position:fixed;inset:0;display:flex;flex-direction:column}
+main{flex:1;position:relative;overflow:hidden}
+.view{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:calc(16px + var(--safe-t)) 16px 24px}
+.view.full{padding:0;overflow:hidden}
+.wrap{max-width:680px;margin:0 auto}
+
+nav.tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--pine);padding-bottom:var(--safe-b)}
+nav.tabs button{background:none;border:0;color:#C9D8CE;min-height:62px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:.78rem}
+nav.tabs button svg{width:26px;height:26px}
+nav.tabs button[aria-current="page"]{color:#fff;box-shadow:inset 0 4px 0 var(--chart)}
+
+/* controls */
+.btn{min-height:var(--tap);padding:0 18px;border-radius:999px;border:2px solid var(--pine);background:var(--paper);font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn.primary{background:var(--pine);color:#fff}
+.btn.hot{background:var(--lure);border-color:var(--lure);color:#fff}
+.btn.ghost{border-color:var(--rule)}
+.btn.sm{min-height:40px;padding:0 14px;font-size:.92rem}
+.btn:disabled{opacity:.5}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:4px;margin:12px 0}
+.field label{font-weight:700;font-size:.92rem}
+input[type=text],input[type=number],input[type=search],input[type=password],input[type=datetime-local],select,textarea{
+  min-height:var(--tap);border:2px solid var(--rule);border-radius:12px;padding:10px 12px;background:var(--paper);width:100%}
+textarea{min-height:90px}
+input:focus,select:focus,textarea:focus{border-color:var(--pine);outline:none}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+
+/* lists */
+.list{list-style:none;margin:10px 0;padding:0;border-top:2px solid var(--pine)}
+.list>li{border-bottom:1px solid var(--rule)}
+.list>li>button,.list>li>.li{width:100%;text-align:left;background:none;border:0;padding:14px 4px;display:flex;gap:12px;align-items:center;min-height:64px}
+.li-main{flex:1;min-width:0}
+.li-main strong{display:block}
+.tag{display:inline-block;border:1.5px solid currentColor;border-radius:999px;padding:0 8px;font-size:.78rem;font-weight:700;white-space:nowrap}
+.tag.saved{color:var(--ok)} .tag.pending{color:var(--lure)} .tag.protected{color:var(--warn)}
+
+/* lake header */
+.lakehead{border-bottom:2px solid var(--pine);padding-bottom:12px;margin-bottom:14px}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:2px 16px;margin:10px 0}
+.facts div{padding:6px 0;border-bottom:1px dotted var(--rule)}
+.facts b{display:block;font-size:1.25rem}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.chip{border:2px solid var(--rule);background:var(--paper);border-radius:999px;padding:6px 12px;font-weight:700;font-size:.9rem}
+.chip .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+
+/* map */
+#map{position:absolute;inset:0;background:#cfe4ea}
+.leaflet-container{font-family:inherit}
+.mapbar{position:absolute;left:10px;right:10px;top:calc(10px + var(--safe-t));z-index:500;display:flex;gap:8px;flex-wrap:wrap}
+.mapbar select{min-height:46px;border-radius:999px;border:2px solid var(--pine);font-weight:700;background:var(--paper);flex:1;min-width:140px;width:auto}
+.panel{position:absolute;left:10px;right:10px;bottom:10px;z-index:500;background:var(--paper);border:2px solid var(--pine);border-radius:var(--r);padding:12px 14px;max-height:42%;overflow-y:auto}
+.panel.collapsed .panel-body{display:none}
+.panel-head{display:flex;align-items:center;gap:10px}
+.panel-head h3{flex:1}
+.wx{display:flex;gap:14px;flex-wrap:wrap;font-size:.92rem;margin:6px 0}
+.wx b{font-size:1.05rem}
+.spot-icon{background:var(--lure);color:#fff;border:3px solid #fff;border-radius:50%;width:34px!important;height:34px!important;display:flex;align-items:center;justify-content:center;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.catch-icon{background:var(--chart);color:var(--pine);border:3px solid var(--pine);border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:26px!important;height:26px!important}
+.access-icon{background:var(--pine);color:#fff;border-radius:6px;width:26px!important;height:26px!important;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}
+.me-icon{background:#1a73e8;border:3px solid #fff;border-radius:50%;width:18px!important;height:18px!important;box-shadow:0 0 0 6px rgba(26,115,232,.25)}
+
+/* sounder strip — the signature element */
+.sounder{display:flex;gap:12px;align-items:stretch;margin:10px 0 4px}
+.sounder svg{flex:0 0 74px;height:150px}
+.sounder .read{flex:1}
+.sounder .range{font-size:2rem;font-weight:700;line-height:1}
+.sounder .range small{font-size:1rem}
+
+/* camera */
+#cam{position:absolute;inset:0;background:#000}
+#cam video,#cam canvas.overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cam-top{position:absolute;top:calc(10px + var(--safe-t));left:10px;right:10px;display:flex;gap:8px;z-index:3;align-items:flex-start}
+.cam-read{flex:1;background:rgba(255,255,255,.92);border-radius:12px;padding:8px 12px;font-size:.92rem}
+.cam-bottom{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:10px;align-items:flex-end;z-index:3}
+#radar{width:150px;height:150px;border-radius:50%;background:rgba(14,59,92,.75);border:2px solid #fff}
+.cam-start{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff;padding:24px;text-align:center;z-index:4;background:var(--deep)}
+.cam-tune{background:rgba(255,255,255,.95);border-radius:12px;padding:10px 12px;flex:1;font-size:.88rem}
+.cam-tune input[type=range]{width:100%}
+
+/* modal */
+.modal{position:fixed;inset:0;z-index:2000;background:rgba(15,30,22,.55);display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--granite);width:100%;max-width:680px;max-height:94%;overflow-y:auto;border-radius:20px 20px 0 0;padding:18px 16px calc(20px + var(--safe-b))}
+.sheet-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.sheet-head h2{flex:1}
+.x{width:46px;height:46px;border-radius:50%;border:2px solid var(--rule);background:var(--paper);font-size:1.4rem;line-height:1}
+
+/* measure */
+.measure-stage{position:relative;background:#000;border-radius:12px;overflow:hidden;touch-action:none}
+.measure-stage canvas{display:block;width:100%}
+.steps{counter-reset:s;list-style:none;padding:0;margin:8px 0}
+.steps li{padding:6px 0 6px 36px;position:relative;color:var(--pine-2)}
+.steps li::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:5px;width:26px;height:26px;border-radius:50%;border:2px solid var(--rule);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem}
+.steps li.now{color:var(--pine);font-weight:700}
+.steps li.now::before{border-color:var(--lure);background:var(--lure);color:#fff}
+.steps li.done::before{border-color:var(--ok);background:var(--ok);color:#fff;content:"✓"}
+.result{font-size:2.2rem;font-weight:700}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + var(--safe-b));background:var(--pine);color:#fff;padding:12px 18px;border-radius:999px;z-index:3000;max-width:90%;text-align:center}
+.banner{background:var(--paper);border-left:6px solid var(--lure);padding:10px 12px;border-radius:8px;margin:10px 0}
+.banner.warn{border-left-color:var(--warn)}
+.photo-thumb{width:64px;height:64px;border-radius:10px;object-fit:cover;background:var(--shallow);flex:0 0 64px}
+.species-art{width:64px;height:28px;flex:0 0 64px}
+details{border-bottom:1px solid var(--rule);padding:8px 0}
+summary{font-weight:700;min-height:44px;display:flex;align-items:center;cursor:pointer}
+.login{max-width:420px;margin:8vh auto 0}
+.login h1{font-size:2.6rem;letter-spacing:-.01em}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <main>
+    <!-- LOGIN -->
+    <section id="v-login" class="view hidden">
+      <div class="login">
+        <svg viewBox="0 0 120 60" width="120" aria-hidden="true"><path d="M60 0v34" stroke="#1F3A2C" stroke-width="3"/><path d="M60 34c0 10-12 12-14 4" fill="none" stroke="#1F3A2C" stroke-width="3" stroke-linecap="round"/><path d="M0 50c15-6 30 6 45 0s30-6 45 0 30 6 30 0" fill="none" stroke="#7FB3C8" stroke-width="3"/></svg>
+        <h1>Dropline</h1>
+        <p class="muted">Where the fish should be on Ontario lakes, and where our crew actually caught them.</p>
+        <div class="field"><label for="in-name">Your name</label><input id="in-name" type="text" autocomplete="given-name" placeholder="e.g. Jordan"></div>
+        <div class="field"><label for="in-code">Group code</label><input id="in-code" type="password" autocomplete="current-password" placeholder="Ask whoever set this up"></div>
+        <button class="btn primary" id="btn-login" style="width:100%">Join the crew</button>
+        <p class="small muted" id="login-err"></p>
+      </div>
+    </section>
+
+    <!-- LAKES -->
+    <section id="v-lakes" class="view hidden"><div class="wrap">
+      <div class="row" style="justify-content:space-between"><h1>Lakes</h1><button class="btn sm ghost hidden" id="btn-install">Install app</button></div>
+      <div class="row" style="margin:12px 0">
+        <input id="lake-q" type="search" placeholder="Search a lake name" style="flex:1" enterkeyhint="search">
+        <button class="btn primary" id="btn-near">Near me</button>
+      </div>
+      <div id="lake-current"></div>
+      <div id="lake-results"></div>
+      <h2 style="margin-top:22px">Saved for offline</h2>
+      <p class="small muted">Saved lakes keep depth contours, spawning areas, the crew's catches and the latest forecast on your phone for when there's no signal.</p>
+      <ul class="list" id="saved-list"></ul>
+      <p class="small muted" style="margin-top:28px">Lake data: Ontario Ministry of Natural Resources, Land Information Ontario (Open Government Licence – Ontario). Weather: Open-Meteo. Map: © OpenStreetMap contributors.</p>
+      <p class="small"><button class="btn sm ghost" id="btn-logout">Switch person</button></p>
+    </div></section>
+
+    <!-- MAP -->
+    <section id="v-map" class="view full hidden">
+      <div id="map"></div>
+      <div class="mapbar">
+        <select id="sel-species" aria-label="Species"></select>
+        <select id="sel-month" aria-label="Month" style="flex:0 0 auto;min-width:96px"></select>
+        <button class="btn sm" id="btn-locate" aria-label="Show my location" style="min-height:46px">◎</button>
+      </div>
+      <div class="panel" id="guide-panel">
+        <div class="panel-head"><h3 id="guide-title">Pick a lake first</h3><button class="btn sm ghost" id="btn-panel">Hide</button></div>
+        <div class="panel-body" id="guide-body"></div>
+      </div>
+    </section>
+
+    <!-- CAMERA -->
+    <section id="v-cam" class="view full hidden">
+      <div id="cam">
+        <video id="cam-video" playsinline muted autoplay></video>
+        <canvas class="overlay" id="cam-canvas"></canvas>
+        <div class="cam-top">
+          <div class="cam-read" id="cam-read">Starting…</div>
+          <button class="btn sm" id="btn-cam-tune">Tune</button>
+        </div>
+        <div class="cam-bottom">
+          <canvas id="radar" width="300" height="300" aria-label="Top-down radar"></canvas>
+          <div class="cam-tune hidden" id="cam-tune">
+            <label>Compass nudge <span id="nudge-v">0°</span><input type="range" id="nudge" min="-40" max="40" value="0"></label>
+            <label>Camera width <span id="fov-v">55°</span><input type="range" id="fov" min="35" max="80" value="55"></label>
+            <p class="small" style="margin:4px 0 0">Point at a boat launch or a marker you can see and slide the nudge until it lines up. Keep the phone away from the motor.</p>
+          </div>
+        </div>
+        <div class="cam-start" id="cam-start">
+          <h2>Camera guide</h2>
+          <p>Hold the phone upright. Likely spots, crew catches and launches float over the water in the direction they are. Expect it to be off by 20–40 m at a few hundred metres — use it to steer, then trust the map.</p>
+          <button class="btn hot" id="btn-cam-go">Start camera</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- LOG -->
+    <section id="v-log" class="view hidden"><div class="wrap">
+      <div class="row" style="justify-content:space-between"><h1>Catch log</h1><button class="btn hot" id="btn-add">Log a catch</button></div>
+      <div class="row" style="margin:12px 0">
+        <select id="log-filter" style="flex:1"><option value="lake">This lake</option><option value="all">All lakes</option><option value="me">Just mine</option></select>
+      </div>
+      <div id="log-pending"></div>
+      <ul class="list" id="log-list"></ul>
+    </div></section>
+
+    <!-- FISH -->
+    <section id="v-fish" class="view hidden"><div class="wrap">
+      <h1>Fish</h1>
+      <p class="muted">Where each one lives through the year, how to tell it apart, and how to cook it.</p>
+      <ul class="list" id="fish-list"></ul>
+    </div></section>
+  </main>
+
+  <nav class="tabs hidden" id="tabs" aria-label="Sections">
+    <button data-v="lakes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 15c3-2 6 2 9 0s6-2 9 0M3 19c3-2 6 2 9 0s6-2 9 0M7 10l5-6 5 6"/></svg>Lakes</button>
+    <button data-v="map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>Guide</button>
+    <button data-v="cam"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7l2-3h4l2 3"/><circle cx="12" cy="13.5" r="3.5"/></svg>Camera</button>
+    <button data-v="log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12c3-4 8-5 12-3l4-3v12l-4-3c-4 2-9 1-12-3z"/><circle cx="8" cy="11.5" r="1" fill="currentColor"/></svg>Log</button>
+    <button data-v="fish"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/></svg>Fish</button>
+  </nav>
+</div>
+
+<input type="file" id="file-photo" accept="image/*" capture="environment" class="hidden">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+'use strict';
+/* =====================================================================
+   SPECIES — rules of thumb for Ontario inland lakes (metres).
+   phases: ice (Dec–Mar), spring (Apr–May), summer (Jun–Aug), fall (Sep–Nov)
+   ws: standard-weight equation log10(g) = a + b·log10(TL mm); v = verified source
+   ===================================================================== */
+const SPECIES = [
+ {k:'walleye',n:'Walleye',ara:['Walleye'],act:['Walleye'],col:'#C99A2E',spawn:[4],wind:1,ws:[-5.453,3.180,1],
+  ph:{ice:[[4,9],'Edges of mid-lake humps and main-lake points. Best bite at dawn, dusk and after dark.'],
+      spring:[[1,4],'After the spawn: rocky shoals, current near inflows, then nearby sand and mud flats.'],
+      summer:[[5,10],'Breaklines off points and humps, mud-flat edges. They slide shallower in low light and on windy shores.'],
+      fall:[[4,12],'Steep rocky breaks near deep water, following baitfish deeper as the water cools.']},
+  id:'Glassy marble eye, white tip on the lower tail, no spots on the spiny dorsal fin. Sharp teeth.',
+  cook:'Ontario’s favourite eating fish. Fillet, skin off, then shore-lunch style: dredge in seasoned flour or crushed crackers and pan-fry in butter and oil 2–3 min a side. Also excellent baked with lemon.'},
+ {k:'sauger',n:'Sauger',ara:['Sauger'],act:['Sauger'],col:'#A88A3A',spawn:[4],wind:1,ws:[-5.492,3.187,0],
+  ph:{ice:[[6,12],'Deeper than walleye; soft-bottom basin edges.'],spring:[[2,6],'River mouths and rocky current areas.'],summer:[[6,14],'Deep breaks and basin edges in murky water.'],fall:[[6,14],'Deep structure near current.']},
+  id:'Like a walleye but with dark spots on the spiny dorsal fin and no white tail tip.',
+  cook:'Cook exactly like walleye. Thinner fillets, so fry a little shorter.'},
+ {k:'pike',n:'Northern pike',ara:['Northern Pike','Pikes'],act:['Northern Pike'],col:'#5E8C3A',spawn:[3,4],wind:1,ws:[-5.437,3.096,0],
+  ph:{ice:[[1,5],'Weedy bays and the first drop-off outside them.'],spring:[[0.5,3],'Shallow, warming bays and marsh edges.'],summer:[[2,7],'Outside weed edges. The big ones go deeper and cooler.'],fall:[[2,8],'Remaining green weeds and points near deep water.']},
+  id:'Long body, duck-bill snout, light bean-shaped spots on a dark green body.',
+  cook:'Firm, white and mild. Watch for the Y-bones: fillet them out (look up “boneless pike fillet”), or score the fillet and fry so the small bones soften. Great in fish cakes. Big pike carry more mercury — keep the smaller ones to eat.'},
+ {k:'muskie',n:'Muskellunge',ara:['Muskellunge'],act:['Muskellunge'],col:'#3D6B4F',spawn:[4,5],wind:1,ws:[-5.600,3.137,0],release:'Most anglers release muskie, and size limits are very high.',
+  ph:{ice:null,spring:[[1,4],'Shallow, warming bays. Season is usually closed in spring — check your zone.'],summer:[[2,8],'Weed edges, rock reefs, and open water over basins.'],fall:[[3,10],'Points and breaks near deep water; the trophy season.']},
+  id:'Like a pike but with dark bars or spots on a light body, and no scales on the lower half of the cheek.',
+  cook:'Release. Muskie are slow-growing, high in mercury, and minimum sizes are usually over 100 cm.'},
+ {k:'lmb',n:'Largemouth bass',ara:['Largemouth Bass'],act:['Largemouth Bass','Centrarchidae','Sunfishes'],col:'#7A9A2E',spawn:[5,6],wind:0,ws:[-5.528,3.273,0],
+  ph:{ice:[[3,6],'Deepest weed edges in bays.'],spring:[[0.5,2.5],'Shallow, soft-bottom bays as they warm. Season usually opens late June.'],summer:[[1,4],'Thick weeds, docks, lily pads, fallen trees.'],fall:[[2,5],'Weed edges near the first drop-off.']},
+  id:'Jaw extends past the eye; dark side stripe; the two dorsal fins are nearly split.',
+  cook:'Mild white fillets. Skin them (the skin tastes weedy) and fry or grill. Fish from warm, weedy water taste better in cooler months.'},
+ {k:'smb',n:'Smallmouth bass',ara:['Smallmouth Bass'],act:['Smallmouth Bass','Centrarchidae','Sunfishes'],col:'#8C6D3A',spawn:[5,6],wind:1,ws:[-5.329,3.200,0],
+  ph:{ice:[[6,12],'Deep rock and steep breaks; slow.'],spring:[[1.5,5],'Gravel and rock flats warming in the sun. Season usually opens late June.'],summer:[[3,8],'Rock humps, points, and boulder breaks.'],fall:[[5,12],'Steep rocky breaks; they school up deep.']},
+  id:'Bronze with vertical bars; jaw stops below the eye; red eye.',
+  cook:'Firm and clean-tasting. Skin off, then fry, grill or bake. One of the better-eating bass.'},
+ {k:'rockbass',n:'Rock bass',ara:['Rock Bass'],act:['Rock Bass'],col:'#7A4E3A',spawn:[6],wind:0,ws:[-4.827,3.074,0],
+  ph:{ice:[[3,6],'Rocky drop-offs.'],spring:[[1,3],'Rocky shorelines.'],summer:[[1,5],'Boulders, docks and rocky points.'],fall:[[2,6],'Rocky breaks.']},
+  id:'Thick-bodied, red eye, rows of dark spots. Great first fish for kids.',
+  cook:'Pan-fry whole (scaled and gutted) or in small fillets.'},
+ {k:'crappie',n:'Black crappie',ara:['Black Crappie'],act:['Black Crappie','Centrarchidae','Sunfishes'],col:'#6E6E8C',spawn:[5,6],wind:0,ws:[-5.618,3.345,0],
+  ph:{ice:[[4,9],'Suspended over the deepest basin; often mid-water.'],spring:[[0.5,2.5],'Shallow bays, reeds and fallen wood.'],summer:[[2,6],'Weed edges and wood; suspended at dusk.'],fall:[[3,8],'Moving to basins; schools up.']},
+  id:'Flat, silvery with black speckles; 7–8 spines on the dorsal fin.',
+  cook:'Sweet, flaky and delicate. Fillet and pan-fry lightly floured. Excellent eating.'},
+ {k:'bluegill',n:'Bluegill',ara:['Bluegill'],act:['Blue Gill','Centrarchidae','Sunfishes'],col:'#3E7FA0',spawn:[6],wind:0,ws:[-5.374,3.316,0],
+  ph:{ice:[[2,6],'Weed edges in bays.'],spring:[[0.5,2],'Warm, shallow bays.'],summer:[[1,4],'Weeds and docks; nests in sand in June.'],fall:[[2,5],'Weed edges.']},
+  id:'Dark ear flap with no colour edge; faint vertical bars.',
+  cook:'Pan-fry whole or as tiny fillets. Sweet and mild; a great kids’ fish.'},
+ {k:'pumpkinseed',n:'Pumpkinseed',ara:['Pumpkinseed'],act:['Pumpkinseed','Centrarchidae','Sunfishes'],col:'#D08A2E',spawn:[5,6],wind:0,ws:[-5.179,3.237,0],
+  ph:{ice:[[1.5,5],'Weedy bays.'],spring:[[0.3,1.5],'Very shallow, warm shorelines.'],summer:[[0.5,3],'Docks and weeds right along shore.'],fall:[[1,4],'Weed edges.']},
+  id:'Orange belly, blue squiggles on the face, red spot on the ear flap.',
+  cook:'Same as bluegill — pan-fried whole.'},
+ {k:'perch',n:'Yellow perch',ara:['Yellow Perch'],act:['Yellow Perch','Perches'],col:'#C9B230',spawn:[4,5],wind:1,ws:[-5.386,3.230,1],
+  ph:{ice:[[3,10],'Soft-bottom flats and basin edges; schools roam.'],spring:[[1,4],'Shallow weeds and wood.'],summer:[[3,8],'Weed edges and sand-to-mud transitions.'],fall:[[3,9],'Deeper flats; big schools.']},
+  id:'Yellow with 6–8 dark vertical bars; orange lower fins.',
+  cook:'Among the best eating in Ontario. Fillet, dip in egg and breadcrumbs, quick fry.'},
+ {k:'laker',n:'Lake trout',ara:['Lake Trout'],act:['Lake Trout','Salmonidae'],col:'#4B6E8C',spawn:[10],wind:0,cold:1,ws:[-5.681,3.246,0],
+  ph:{ice:[[8,30],'Points and humps near deep water; they cruise high under the ice.'],spring:[[2,10],'Right after ice-out they feed shallow near shore.'],summer:[[15,35],'Deep, cold water below the thermocline.'],fall:[[3,12],'Rocky shoals for spawning — most zones close the season in fall.']},
+  id:'Deeply forked tail, light spots on a dark grey-green body.',
+  cook:'Rich, oily flesh. Grill, bake or smoke. Larger lake trout can carry more mercury — keep the smaller ones.'},
+ {k:'brookie',n:'Brook trout',ara:['Brook Trout'],act:['Brook Trout','Salmonidae'],col:'#A04A3A',spawn:[10],wind:0,cold:1,ws:[-5.186,3.103,0],
+  ph:{ice:[[1,5],'Shallow shorelines and spring inflows.'],spring:[[0.5,4],'Shallow shorelines feeding on insects.'],summer:[[4,10],'Cold springs and deep, cool water.'],fall:[[1,4],'Spawning shoals and inflows; often closed.']},
+  id:'Worm-like marks on the back, red spots with blue halos, white-edged lower fins.',
+  cook:'Delicate. Cook whole in a pan with butter or over the fire wrapped in foil.'},
+ {k:'rainbow',n:'Rainbow trout',ara:['Rainbow Trout'],act:['Rainbow Trout','Salmonidae'],col:'#C06A8C',spawn:[4],wind:0,cold:1,ws:[-4.898,2.990,1],
+  ph:{ice:[[2,8],'Near shore and points.'],spring:[[1,5],'Inflows and shorelines.'],summer:[[6,20],'Cool water near the thermocline.'],fall:[[2,8],'Moving shallower as it cools.']},
+  id:'Pink side stripe, small black spots over the body and tail.',
+  cook:'Bake, grill or pan-fry whole. Mild and rich.'},
+ {k:'brown',n:'Brown trout',ara:['Brown Trout'],act:['Brown Trout','Salmonidae'],col:'#8C5A2E',spawn:[10,11],wind:0,cold:1,ws:[-5.422,3.194,1],
+  ph:{ice:[[2,6],'Shallow shorelines.'],spring:[[1,5],'Warming shorelines and inflows.'],summer:[[6,15],'Cool, deeper water; shallow at night.'],fall:[[2,8],'Heading to spawning streams.']},
+  id:'Black and red spots, often with pale halos; little or no spotting on the tail.',
+  cook:'Like rainbow trout. Great smoked.'},
+ {k:'splake',n:'Splake',ara:['Splake'],act:['Salmonidae'],col:'#5A7A8C',spawn:[10],wind:0,cold:1,ws:[-5.186,3.103,0],
+  ph:{ice:[[2,10],'Shorelines and points; very active under the ice.'],spring:[[1,6],'Shallow after ice-out.'],summer:[[8,20],'Cool, deep water.'],fall:[[2,8],'Rocky shorelines.']},
+  id:'Brook × lake trout hybrid: brook-trout markings with a slightly forked tail.',
+  cook:'Pan-fry or bake like brook trout.'},
+ {k:'chinook',n:'Chinook salmon',ara:['Chinook Salmon'],act:['Chinook Salmon','Salmonidae'],col:'#6A7A9A',spawn:[9,10],wind:0,cold:1,ws:[-5.15,3.07,0],
+  ph:{ice:null,spring:[[3,15],'Near shore where warm water meets cold.'],summer:[[15,35],'Deep, cold water off shore.'],fall:[[1,5],'Staging at river mouths before running.']},
+  id:'Black gums, small spots on the back and the whole tail.',
+  cook:'Grill or bake. Great Lakes fish have stricter consumption limits — check the guide for the exact area.'},
+ {k:'coho',n:'Coho salmon',ara:['Coho Salmon'],act:['Coho Salmon','Salmonidae'],col:'#7A8AA0',spawn:[10],wind:0,cold:1,ws:[-5.1,3.05,0],
+  ph:{ice:null,spring:[[2,10],'Near shore in warmer water.'],summer:[[10,25],'Off shore, cool water.'],fall:[[1,5],'River mouths.']},
+  id:'White gums, spots only on the upper half of the tail.',
+  cook:'Like chinook. Milder flavour.'},
+ {k:'whitefish',n:'Lake whitefish',ara:['Lake Whitefish'],act:['Lake Whitefish'],col:'#9AA6A0',spawn:[11],wind:0,cold:1,ws:[-5.38,3.18,0],
+  ph:{ice:[[10,25],'Soft-bottom basins; a classic ice-fishing target.'],spring:[[5,15],'Mid-depth flats.'],summer:[[15,30],'Deep, cold water.'],fall:[[5,15],'Moving to rocky spawning shoals.']},
+  id:'Silver, small mouth tucked under a rounded snout, forked tail.',
+  cook:'Superb smoked; also pan-fried. Mild and flaky.'},
+ {k:'catfish',n:'Channel catfish',ara:['Channel Catfish'],act:[],col:'#5A5A6E',spawn:[6,7],wind:0,ws:[-5.800,3.294,0],
+  ph:{ice:[[5,12],'Deep holes.'],spring:[[1,4],'Warming shallows and river mouths.'],summer:[[2,6],'Holes and wood; feed in the shallows at night.'],fall:[[3,8],'Deep holes.']},
+  id:'Whiskers, forked tail, small dark spots on younger fish.',
+  cook:'Skin, then fry in cornmeal. Smaller ones taste best.'},
+ {k:'bullhead',n:'Brown bullhead',ara:['Brown Bullhead'],act:['Brown Bullhead'],col:'#6E5A3A',spawn:[5,6],wind:0,ws:[-5.084,3.115,0],
+  ph:{ice:[[2,6],'Soft-bottom bays.'],spring:[[0.5,2],'Warm, muddy bays.'],summer:[[1,4],'Soft bottoms; best after dark.'],fall:[[1,4],'Bays.']},
+  id:'Whiskers, square tail, mottled brown. Watch the sharp fin spines.',
+  cook:'Skin, then fry. Sweet, tender meat.'},
+ {k:'carp',n:'Common carp',ara:['Common Carp'],act:['Common Carp'],col:'#B08A4A',spawn:[6],wind:0,ws:[-4.639,2.920,0],
+  ph:{ice:[[3,8],'Deep, soft-bottom basins; sluggish.'],spring:[[0.5,2],'Shallow, warm bays and marshes.'],summer:[[1,4],'Shallow flats; look for muddy water and bubbles.'],fall:[[2,5],'Moving deeper.']},
+  id:'Large scales, two pairs of barbels at the mouth.',
+  cook:'Mostly a catch-and-release sport fish here. If keeping one, it’s best smoked or in fish cakes.'},
+ {k:'drum',n:'Freshwater drum',ara:['Freshwater Drum'],act:[],col:'#9A9AA6',spawn:[6],wind:1,ws:[-5.111,3.110,0],
+  ph:{ice:[[5,12],'Deep basins.'],spring:[[2,6],'Mid-depth flats.'],summer:[[3,8],'Mussel beds and soft flats.'],fall:[[4,10],'Deep flats.']},
+  id:'Silver, humped back, long dorsal fin, rounded tail. Croaks when landed.',
+  cook:'Firm and mild; fry or use in chowder.'},
+ {k:'burbot',n:'Burbot',ara:['Burbot'],act:['Burbot'],col:'#6A5A4A',spawn:[2],wind:0,cold:1,ws:[-4.868,2.898,1],
+  ph:{ice:[[6,20],'Rocky humps and flats at night — the classic late-winter target.'],spring:[[10,25],'Deep.'],summer:[[15,35],'Deep and cold.'],fall:[[10,25],'Deep rock.']},
+  id:'Eel-like, single chin barbel, mottled. Freshwater cod.',
+  cook:'“Poor man’s lobster”: boil chunks in salted water and dip in butter. Firm, sweet meat.'},
+ {k:'sturgeon',n:'Lake sturgeon',ara:['Lake Sturgeon'],act:[],col:'#555',protected:1,ws:null,ph:{},
+  id:'Shark-like tail, rows of bony plates, shovel snout.',
+  cook:'Protected or heavily restricted in most of Ontario. Release gently.'},
+ {k:'eel',n:'American eel',ara:['American Eel'],act:[],col:'#555',protected:1,ws:null,ph:{},
+  id:'Snake-like body with one long fin.',
+  cook:'Endangered in Ontario. Keeping one is not permitted — release it.'},
+];
+const SP = Object.fromEntries(SPECIES.map(s => [s.k, s]));
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const phaseOf = m => (m === 12 || m <= 3) ? 'ice' : m <= 5 ? 'spring' : m <= 8 ? 'summer' : 'fall';
+function speciesFromAra(name) {
+  return SPECIES.find(s => s.ara.some(a => a.toLowerCase() === name.toLowerCase()));
+}
+
+/* ===================== state & storage ===================== */
+const S = {
+  me: localStorage.getItem('dl_name') || '',
+  code: localStorage.getItem('dl_code') || '',
+  lake: null,        // current bundle
+  catches: [],       // for current lake (server + pending)
+  wx: null,
+  view: 'lakes',
+  species: localStorage.getItem('dl_species') || 'walleye',
+  month: new Date().getMonth() + 1,
+  pos: null,         // {lat,lng,acc}
+};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg, ms = 2600) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), ms); }
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+// IndexedDB: lakes (saved bundles) + outbox (unsent catches)
+const idb = (() => {
+  let dbp;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('dropline', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('lakes', { keyPath: 'lid' }); r.result.createObjectStore('outbox', { keyPath: 'id' }); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const tx = async (store, mode, fn) => { const db = await open(); return new Promise((res, rej) => { const t = db.transaction(store, mode); const s = t.objectStore(store); const out = fn(s); t.oncomplete = () => res(out && out.result !== undefined ? out.result : out); t.onerror = () => rej(t.error); }); };
+  return {
+    get: (st, k) => tx(st, 'readonly', s => s.get(k)),
+    all: (st) => tx(st, 'readonly', s => s.getAll()),
+    put: (st, v) => tx(st, 'readwrite', s => s.put(v)),
+    del: (st, k) => tx(st, 'readwrite', s => s.delete(k)),
+  };
+})();
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { 'X-Group-Code': S.code, 'X-Angler': S.me, ...(opts.body ? { 'content-type': 'application/json' } : {}), ...(opts.headers || {}) } });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(data.error || `Request failed (${res.status})`); e.status = res.status; throw e; }
+  return data;
+}
+
+/* ===================== geo helpers ===================== */
+const R = 6371000, D2R = Math.PI / 180;
+function dist(a, b) { const x = (b.lng - a.lng) * D2R * Math.cos((a.lat + b.lat) / 2 * D2R), y = (b.lat - a.lat) * D2R; return Math.sqrt(x * x + y * y) * R; }
+function bearing(a, b) { const y = Math.sin((b.lng - a.lng) * D2R) * Math.cos(b.lat * D2R); const x = Math.cos(a.lat * D2R) * Math.sin(b.lat * D2R) - Math.sin(a.lat * D2R) * Math.cos(b.lat * D2R) * Math.cos((b.lng - a.lng) * D2R); return (Math.atan2(y, x) / D2R + 360) % 360; }
+const compass = d => ['N','NE','E','SE','S','SW','W','NW'][Math.round(((d % 360) + 360) % 360 / 45) % 8];
+function centroidOfRing(r) { let x = 0, y = 0; for (const p of r) { x += p[0]; y += p[1]; } return { lng: x / r.length, lat: y / r.length }; }
+
+/* ===================== weight ===================== */
+function estWeightKg(spKey, lengthCm) {
+  const s = SP[spKey];
+  if (!s || !s.ws || !lengthCm) return null;
+  const ws = Math.pow(10, s.ws[0] + s.ws[1] * Math.log10(lengthCm * 10)) / 1000; // kg, good-condition fish
+  return { kg: ws * 0.9, lo: ws * 0.78, hi: ws * 1.05, verified: !!s.ws[2] };
+}
+
+/* ===================== the guide engine =====================
+   Combines: species seasonal depth range (rules of thumb), real depth
+   contours (steep breaks score higher), government spawning areas
+   (bonus just before / after spawning only), the crew's catches,
+   and wind (windward shores for wind-loving species). */
+function computeGuide(lake, spKey, month, wx, catches) {
+  const sp = SP[spKey];
+  const out = { sp, phase: phaseOf(month), spots: [], zone: [], notes: [] };
+  if (!sp) return out;
+  if (sp.protected) { out.notes.push(sp.cook); return out; }
+  const prof = sp.ph[out.phase];
+  if (!prof) { out.closed = true; out.notes.push(`${sp.n} usually aren’t fished at this time of year in Ontario.`); return out; }
+  let [dmin, dmax] = prof[0];
+  out.tip = prof[1];
+  if (!sp.cold && lake.secchi) {
+    if (lake.secchi >= 4) { dmin *= 1.2; dmax *= 1.25; out.notes.push('Clear water: fish tend to sit deeper and bite best in low light.'); }
+    else if (lake.secchi < 1.5) { dmin *= 0.8; dmax *= 0.8; out.notes.push('Stained water: fish tend to sit shallower.'); }
+  }
+  const maxC = lake.contours.reduce((m, c) => Math.max(m, c.d), 0);
+  const lakeMax = Math.max(lake.maxDepth || 0, maxC);
+  if (lakeMax && dmin > lakeMax * 0.85) {
+    out.notes.push(`This lake (max ${lakeMax.toFixed(1)} m) is shallower than where ${sp.n.toLowerCase()} usually sit now — fish the deepest water you can find.`);
+    dmin = lakeMax * 0.6; dmax = lakeMax;
+  }
+  out.range = [Math.round(dmin * 10) / 10, Math.round(dmax * 10) / 10];
+  if (sp.spawn && sp.spawn.includes(month)) out.notes.push(`${sp.n} are spawning around now. Many zones close the season — check the regulations, and leave spawning fish alone.`);
+
+  // local metric projection
+  const lat0 = (lake.bbox[1] + lake.bbox[3]) / 2, lng0 = (lake.bbox[0] + lake.bbox[2]) / 2;
+  const kx = Math.cos(lat0 * D2R) * 111320, ky = 110540;
+  const P = (lng, lat) => [(lng - lng0) * kx, (lat - lat0) * ky];
+
+  // resample every contour to even spacing, then build a spatial grid
+  let totalLen = 0;
+  const projected = lake.contours.map(c => { const pts = c.c.map(([lng, lat]) => P(lng, lat)); for (let i = 1; i < pts.length; i++) totalLen += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return pts; });
+  const STEP = Math.max(20, totalLen / 150000);
+  const CELL = 60, grid = new Map(), cand = [];
+  lake.contours.forEach((c, ci) => {
+    const inRange = c.d >= dmin && c.d <= dmax;
+    if (inRange) out.zone.push(c);
+    const pts = projected[ci];
+    const add = (x, y) => {
+      const v = { x, y, d: c.d, lng: lng0 + x / kx, lat: lat0 + y / ky }, key = `${Math.floor(x / CELL)},${Math.floor(y / CELL)}`;
+      (grid.get(key) || grid.set(key, []).get(key)).push(v);
+      if (inRange) cand.push(v);
+    };
+    add(...pts[0]);
+    let carry = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const [ax, ay] = pts[i - 1], [bx, by] = pts[i], L = Math.hypot(bx - ax, by - ay);
+      let t = STEP - carry;
+      while (t <= L) { add(ax + (bx - ax) * t / L, ay + (by - ay) * t / L); t += STEP; }
+      carry = L - (t - STEP);
+    }
+  });
+  // spawning areas relevant just before / after the spawn
+  const spawnPts = [];
+  if (sp.spawn) {
+    const near = sp.spawn.some(m => Math.abs(m - month) === 1 || Math.abs(m - month) === 11);
+    if (near) for (const a of lake.activity) if (sp.act.some(n => a.type.startsWith(n))) for (const poly of a.polys) { const c = centroidOfRing(poly[0]); spawnPts.push(P(c.lng, c.lat)); }
+    if (spawnPts.length) out.notes.push('Staging near known spawning areas is weighted higher this month.');
+  }
+  const crewPts = catches.filter(c => c.species === spKey && c.lat != null).map(c => P(c.lng, c.lat));
+  let windVec = null;
+  if (sp.wind && wx && wx.wind >= 12) {
+    const toward = (wx.windDir + 180) * D2R; windVec = [Math.sin(toward), Math.cos(toward)];
+    out.notes.push(`Wind ${Math.round(wx.wind)} km/h from the ${compass(wx.windDir)}: shores and points on the ${compass(wx.windDir + 180)} side get pushed bait — worth a look.`);
+  }
+  const W = Math.max((lake.bbox[2] - lake.bbox[0]) * kx, (lake.bbox[3] - lake.bbox[1]) * ky) / 2 || 1;
+
+  const stride = Math.max(1, Math.floor(cand.length / 40000));
+  const scored = [];
+  for (let i = 0; i < cand.length; i += stride) {
+    const v = cand[i];
+    const gx = Math.floor(v.x / CELL), gy = Math.floor(v.y / CELL);
+    let steep = 0;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      const cell = grid.get(`${gx + dx},${gy + dy}`); if (!cell) continue;
+      for (const u of cell) {
+        const dd = Math.abs(u.d - v.d); if (dd < 1) continue;
+        const dm = Math.hypot(u.x - v.x, u.y - v.y); if (dm > 80) continue;
+        steep = Math.max(steep, dd / Math.max(dm, 8));
+      }
+    }
+    let score = 0.4 + Math.min(steep * 8, 4);
+    for (const [sx, sy] of spawnPts) if (Math.hypot(sx - v.x, sy - v.y) < 400) { score += 2; break; }
+    let crew = 0; for (const [cx, cy] of crewPts) if (Math.hypot(cx - v.x, cy - v.y) < 150) crew++;
+    score += Math.min(crew * 1.5, 4.5);
+    if (windVec) score += Math.max(0, (v.x * windVec[0] + v.y * windVec[1]) / W) * 1.2;
+    scored.push({ ...v, score, steep, crew });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  for (const s of scored) {
+    if (out.spots.length >= 8) break;
+    if (out.spots.some(p => Math.hypot(p.x - s.x, p.y - s.y) < 220)) continue;
+    const why = [];
+    if (s.steep > 0.12) why.push('steep break'); else if (s.steep > 0.05) why.push('gentle drop-off'); else why.push('right depth');
+    if (s.crew) why.push(`${s.crew} crew catch${s.crew > 1 ? 'es' : ''} nearby`);
+    out.spots.push({ lat: s.lat, lng: s.lng, depth: s.d, score: s.score, why: why.join(', '), x: s.x, y: s.y });
+  }
+  if (!lake.contours.length) out.notes.push('No depth map exists for this lake, so spots come only from crew catches and spawning areas. Use the depth range with a sonar or a weighted line.');
+  return out;
+}
+
+/* ===================== weather ===================== */
+async function fetchWeather(lat, lng) {
+  const u = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lng.toFixed(3)}&hourly=temperature_2m,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,cloud_cover,precipitation_probability&past_days=1&forecast_days=3&timezone=auto&wind_speed_unit=kmh`;
+  const r = await fetch(u); if (!r.ok) throw new Error('weather');
+  const j = await r.json(); j.savedAt = Date.now(); return j;
+}
+function readWeather(raw) {
+  if (!raw || !raw.hourly) return null;
+  const h = raw.hourly, now = Date.now();
+  let i = h.time.findIndex(t => new Date(t).getTime() > now) - 1;
+  if (i < 0) i = h.time.length - 1;
+  const p = h.pressure_msl, i3 = Math.max(0, i - 3);
+  const trend = p[i] - p[i3];
+  let read;
+  if (trend <= -1) read = 'Pressure falling — angler rule of thumb: fish often feed harder ahead of a front.';
+  else if (trend >= 1.5) read = 'Pressure rising fast after a front — fish tend to go quiet and tuck into cover. Slow down, fish tighter.';
+  else read = 'Pressure steady — normal patterns should hold.';
+  const stale = now - (raw.savedAt || now) > 6 * 3600e3;
+  return { temp: h.temperature_2m[i], wind: h.wind_speed_10m[i], gust: h.wind_gusts_10m[i], windDir: h.wind_direction_10m[i],
+           pressure: p[i], trend, cloud: h.cloud_cover[i], rain: h.precipitation_probability[i], read, stale, savedAt: raw.savedAt };
+}
+
+/* ===================== login ===================== */
+async function login() {
+  const name = $('#in-name').value.trim(), code = $('#in-code').value.trim();
+  if (!name || !code) { $('#login-err').textContent = 'Enter your name and the group code.'; return; }
+  S.code = code;
+  try { await api('/api/ping'); }
+  catch (e) { $('#login-err').textContent = e.status === 401 ? 'That group code didn’t work. Check with whoever set this up.' : (navigator.onLine ? e.message : 'You’re offline. Connect once to join the crew.'); return; }
+  S.me = name; localStorage.setItem('dl_name', name); localStorage.setItem('dl_code', code);
+  boot();
+}
+
+/* ===================== navigation ===================== */
+function show(v) {
+  S.view = v;
+  for (const s of document.querySelectorAll('main > section')) s.classList.add('hidden');
+  $(`#v-${v}`).classList.remove('hidden');
+  for (const b of document.querySelectorAll('nav.tabs button')) {
+    if (b.dataset.v === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  }
+  if (v === 'map') { ensureMap(); setTimeout(() => map.invalidateSize(), 50); renderMap(); startGPS(); }
+  if (v === 'log') renderLog();
+  if (v === 'cam') { startGPS(); } else stopCamera();
+  if (v === 'lakes') renderLakes();
+}
+
+/* ===================== lakes ===================== */
+let searchTimer;
+async function searchLakes(params) {
+  const box = $('#lake-results');
+  box.innerHTML = '<p class="muted">Searching Ontario lakes…</p>';
+  try {
+    const { lakes } = await api('/api/lakes?' + new URLSearchParams(params));
+    if (!lakes.length) { box.innerHTML = '<p class="muted">No lakes found. Try part of the name, e.g. “Scugog”.</p>'; return; }
+    box.innerHTML = `<ul class="list">${lakes.map(l => `<li><button data-lid="${esc(l.lid)}"><div class="li-main"><strong>${esc(l.name)}</strong><span class="small muted">${l.km != null ? l.km + ' km away · ' : ''}${l.areaHa ? Math.round(l.areaHa) + ' ha' : ''}${l.maxDepth ? ' · max ' + l.maxDepth + ' m' : ''}${l.fmz ? ' · Zone ' + l.fmz : ''}</span></div><span aria-hidden="true">›</span></button></li>`).join('')}</ul>`;
+  } catch (e) { box.innerHTML = `<p class="banner warn">${navigator.onLine ? esc(e.message) : 'No signal. Your saved lakes below still work.'}</p>`; }
+}
+async function openLake(lid) {
+  let rec = await idb.get('lakes', lid);
+  let bundle = rec && rec.bundle;
+  if (navigator.onLine) {
+    try { toast('Loading lake data…'); bundle = await api('/api/lake/' + encodeURIComponent(lid)); }
+    catch (e) { if (!bundle) { toast(e.message); return; } }
+  }
+  if (!bundle) { toast('This lake isn’t saved for offline.'); return; }
+  S.lake = bundle;
+  localStorage.setItem('dl_lake', lid);
+  await loadCatches();
+  await loadWeather(rec);
+  if (rec) await saveOffline(true);
+  if (!S.lake.species.some(n => speciesFromAra(n)?.k === S.species)) {
+    const first = S.lake.species.map(speciesFromAra).find(s => s && !s.protected);
+    if (first) S.species = first.k;
+  }
+  if (map) fitLake = true;
+  renderLakes();
+  show('map');
+}
+async function loadCatches() {
+  let server = [];
+  const rec = await idb.get('lakes', S.lake.lid);
+  if (navigator.onLine) { try { server = (await api('/api/catches?lid=' + encodeURIComponent(S.lake.lid))).catches; } catch (e) { server = rec?.catches || []; } }
+  else server = rec?.catches || [];
+  const pending = (await idb.all('outbox')).filter(c => c.lid === S.lake.lid).map(c => ({ ...c, pending: 1 }));
+  S.catches = [...pending, ...server.filter(c => !pending.some(p => p.id === c.id))];
+}
+async function loadWeather(rec) {
+  const lat = (S.lake.bbox[1] + S.lake.bbox[3]) / 2, lng = (S.lake.bbox[0] + S.lake.bbox[2]) / 2;
+  let raw = rec?.weather;
+  if (navigator.onLine) { try { raw = await fetchWeather(lat, lng); } catch (e) {} }
+  S.wxRaw = raw; S.wx = readWeather(raw);
+}
+async function saveOffline(silent) {
+  if (!S.lake) return;
+  const server = S.catches.filter(c => !c.pending);
+  await idb.put('lakes', { lid: S.lake.lid, name: S.lake.name, bundle: S.lake, catches: server, weather: S.wxRaw, savedAt: Date.now() });
+  if (!silent) toast(`${S.lake.name} saved for offline`);
+  renderLakes();
+}
+async function renderLakes() {
+  const saved = await idb.all('lakes');
+  const cur = S.lake;
+  const isSaved = cur && saved.some(s => s.lid === cur.lid);
+  $('#lake-current').innerHTML = cur ? `
+    <div class="lakehead">
+      <h2>${esc(cur.name)}</h2>
+      <div class="facts">
+        ${cur.maxDepth ? `<div><b>${cur.maxDepth} m</b><span class="small muted">deepest</span></div>` : ''}
+        ${cur.meanDepth ? `<div><b>${cur.meanDepth} m</b><span class="small muted">average depth</span></div>` : ''}
+        ${cur.secchi ? `<div><b>${cur.secchi} m</b><span class="small muted">water clarity</span></div>` : ''}
+        ${cur.areaHa ? `<div><b>${Math.round(cur.areaHa)} ha</b><span class="small muted">area</span></div>` : ''}
+        ${cur.thermal ? `<div><b>${esc(cur.thermal)}</b><span class="small muted">water type</span></div>` : ''}
+        ${cur.fmz ? `<div><b>Zone ${cur.fmz}</b><span class="small muted"><a href="https://www.ontario.ca/document/ontario-fishing-regulations-summary" target="_blank" rel="noopener">regulations</a></span></div>` : ''}
+      </div>
+      <p class="small muted">Recorded here: ${cur.species.map(n => { const s = speciesFromAra(n); return s ? `<b>${esc(s.n)}</b>` : esc(n); }).join(', ')}.</p>
+      ${cur.comments ? `<p class="small muted">${esc(cur.comments)}</p>` : ''}
+      ${cur.warnings?.length ? `<p class="banner small">${cur.warnings.map(esc).join(' ')}</p>` : ''}
+      <div class="row">
+        <button class="btn primary" data-act="guide">Open guide</button>
+        <button class="btn ${isSaved ? 'ghost' : ''}" data-act="save">${isSaved ? 'Update offline copy' : 'Save for offline'}</button>
+      </div>
+    </div>` : '<p class="muted">Search for the lake you’re heading to, or tap Near me.</p>';
+  $('#saved-list').innerHTML = saved.length ? saved.sort((a, b) => b.savedAt - a.savedAt).map(s => `
+    <li><div class="li"><button class="li-main" data-lid="${esc(s.lid)}" style="background:none;border:0;text-align:left;padding:0"><strong>${esc(s.name)}</strong><span class="small muted">Saved ${new Date(s.savedAt).toLocaleDateString()} · ${s.bundle.contours.length ? 'depth map' : 'no depth map'} · ${s.catches.length} catches</span></button>
+    <button class="btn sm ghost" data-del="${esc(s.lid)}">Remove</button></div></li>`).join('') : '<li class="muted small" style="padding:12px 4px">Nothing saved yet. Open a lake, then tap Save for offline before you lose signal.</li>';
+}
+
+/* ===================== map ===================== */
+let map, layers = {}, fitLake = true, meMarker;
+function ensureMap() {
+  if (map) return;
+  map = L.map('map', { zoomControl: false, preferCanvas: true, attributionControl: true }).setView([45.5, -79.5], 6);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map);
+  for (const k of ['outline', 'contours', 'zone', 'activity', 'access', 'catches', 'spots']) layers[k] = L.layerGroup().addTo(map);
+  map.on('contextmenu', e => openAddCatch({ lat: e.latlng.lat, lng: e.latlng.lng }));
+}
+function depthColor(d, max) { const t = Math.min(1, d / Math.max(max, 1)); const a = [127, 179, 200], b = [14, 59, 92]; return `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * t)).join(',')})`; }
+function renderMap() {
+  fillSelectors();
+  if (!S.lake) { $('#guide-title').textContent = 'Pick a lake first'; $('#guide-body').innerHTML = '<p>Go to Lakes and choose where you’re fishing.</p>'; return; }
+  const lake = S.lake;
+  Object.values(layers).forEach(l => l.clearLayers());
+  const ll = ring => ring.map(([x, y]) => [y, x]);
+  for (const rings of lake.outline) L.polygon(rings.map(ll), { color: '#1F3A2C', weight: 2, fillColor: '#D7ECF0', fillOpacity: .55 }).addTo(layers.outline);
+  const maxC = lake.contours.reduce((m, c) => Math.max(m, c.d), 0);
+  for (const c of lake.contours) L.polyline(ll(c.c), { color: depthColor(c.d, maxC), weight: 1.2, opacity: .9, interactive: true }).bindTooltip(`${c.d} m`, { sticky: true }).addTo(layers.contours);
+
+  const g = computeGuide(lake, S.species, S.month, S.wx, S.catches);
+  S.guide = g;
+  const col = g.sp?.col || '#F05A1A';
+  for (const c of g.zone) L.polyline(ll(c.c), { color: col, weight: 5, opacity: .75, interactive: false }).addTo(layers.zone);
+  for (const a of lake.activity) {
+    const isSp = g.sp && g.sp.act.some(n => a.type.startsWith(n));
+    for (const p of a.polys) L.polygon(p.map(ll), { color: isSp ? '#C03A6A' : '#B07A9A', weight: isSp ? 2 : 1, dashArray: '4 4', fillOpacity: isSp ? .25 : .08 })
+      .bindPopup(`<b>${esc(a.type)}</b><br>${a.habitat ? esc(a.habitat) + '<br>' : ''}Mapped by Ontario MNR${a.observed ? ', observed ' + new Date(a.observed).getFullYear() : ''}.<br><i>Give spawning fish space.</i>`).addTo(layers.activity);
+  }
+  for (const a of lake.access) L.marker([a.lat, a.lng], { icon: L.divIcon({ className: '', html: '<div class="access-icon">⚓</div>', iconSize: [26, 26] }) })
+    .bindPopup(`<b>${esc(a.name || a.type)}</b><br>${esc(a.type)}${a.parking === 'Yes' ? '<br>Parking' : ''}${a.fee === 'Yes' ? '<br>Fee' : ''}`).addTo(layers.access);
+  for (const c of S.catches) if (c.lat != null) L.marker([c.lat, c.lng], { icon: L.divIcon({ className: '', html: `<div class="catch-icon" style="background:${SP[c.species]?.col || '#B8D400'}"></div>`, iconSize: [26, 26], iconAnchor: [4, 26] }) })
+    .bindPopup(`<b>${esc(SP[c.species]?.n || c.species)}</b>${c.length_cm ? ' · ' + c.length_cm + ' cm' : ''}${c.weight_kg ? ' · ' + c.weight_kg + ' kg' : ''}<br>${esc(c.angler)} · ${new Date(c.caught_at).toLocaleDateString()}${c.depth_m ? '<br>' + c.depth_m + ' m deep' : ''}${c.bait ? '<br>' + esc(c.bait) : ''}`).addTo(layers.catches);
+  g.spots.forEach((s, i) => L.marker([s.lat, s.lng], { icon: L.divIcon({ className: '', html: `<div class="spot-icon">${i + 1}</div>`, iconSize: [34, 34] }) })
+    .bindPopup(`<b>Likely spot ${i + 1}</b><br>${s.depth} m · ${esc(s.why)}<br><button class="btn sm" style="margin-top:6px" onclick="openAddCatch({lat:${s.lat},lng:${s.lng},depth:${s.depth}})">Log a catch here</button>`).addTo(layers.spots));
+
+  if (fitLake) { const ph = $('#guide-panel').classList.contains('collapsed') ? 80 : Math.min(innerHeight * 0.42, 360); map.fitBounds([[lake.bbox[1], lake.bbox[0]], [lake.bbox[3], lake.bbox[2]]], { paddingTopLeft: [16, 70], paddingBottomRight: [16, ph + 16] }); fitLake = false; }
+  renderGuidePanel(g, maxC);
+}
+function sounderSVG(range, max) {
+  const H = 150, top = 6, bot = H - 6, M = Math.max(max || 0, range ? range[1] : 0, 1);
+  const y = d => top + (bot - top) * Math.min(1, d / M);
+  const ticks = [0, M / 2, M].map(d => `<text x="72" y="${y(d) + 4}" text-anchor="end" font-size="11" fill="#3E5A4A">${Math.round(d)}m</text>`).join('');
+  return `<svg viewBox="0 0 74 ${H}" aria-hidden="true">
+    <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D7ECF0"/><stop offset="1" stop-color="#0E3B5C"/></linearGradient></defs>
+    <rect x="2" y="${top}" width="40" height="${bot - top}" rx="6" fill="url(#sg)"/>
+    ${range ? `<rect x="0" y="${y(range[0])}" width="44" height="${Math.max(4, y(range[1]) - y(range[0]))}" rx="4" fill="none" stroke="#F05A1A" stroke-width="3"/>
+    <path d="M14 ${(y(range[0]) + y(range[1])) / 2}c4-4 10-4 14 0c-4 4-10 4-14 0l-4-3v6z" fill="#F05A1A"/>` : ''}
+    ${ticks}</svg>`;
+}
+function renderGuidePanel(g, maxC) {
+  const lake = S.lake, wx = S.wx;
+  $('#guide-title').textContent = `${g.sp ? g.sp.n : 'Fish'} · ${MONTHS[S.month - 1]} · ${lake.name}`;
+  let h = '';
+  if (g.range) h += `<div class="sounder">${sounderSVG(g.range, Math.max(lake.maxDepth || 0, maxC))}<div class="read"><div class="range">${g.range[0]}–${g.range[1]} <small>m</small></div><p class="small muted" style="margin:2px 0 6px">likely depth now</p><p>${esc(g.tip)}</p></div></div>`;
+  if (g.spots.length) h += `<p class="small"><b>${g.spots.length} likely spots</b> marked in orange — highest score first. Highlighted lines are contours in the depth range.</p>`;
+  for (const n of g.notes) h += `<p class="banner small">${esc(n)}</p>`;
+  if (wx) h += `<div class="wx"><span><b>${Math.round(wx.temp)}°C</b></span><span>Wind <b>${Math.round(wx.wind)}</b> km/h ${compass(wx.windDir)} (gusts ${Math.round(wx.gust)})</span><span><b>${Math.round(wx.pressure)}</b> hPa ${wx.trend > 0.4 ? '↑' : wx.trend < -0.4 ? '↓' : '→'}</span><span>Cloud <b>${wx.cloud}%</b></span><span>Rain <b>${wx.rain ?? 0}%</b></span></div><p class="small">${esc(wx.read)}${wx.stale ? ` <span class="muted">(forecast from ${new Date(wx.savedAt).toLocaleString()})</span>` : ''}</p>`;
+  h += `<p class="small muted">Spots are a guide built from depth maps and seasonal habits, not fish sightings. Long-press the map to log a catch at that spot.</p>`;
+  $('#guide-body').innerHTML = h;
+}
+function fillSelectors() {
+  const sel = $('#sel-species');
+  const present = S.lake ? new Set(S.lake.species.map(n => speciesFromAra(n)?.k).filter(Boolean)) : new Set();
+  const list = SPECIES.filter(s => !s.protected);
+  const inLake = list.filter(s => present.has(s.k)), other = list.filter(s => !present.has(s.k));
+  sel.innerHTML = (inLake.length ? `<optgroup label="Recorded in this lake">${inLake.map(s => `<option value="${s.k}">${s.n}</option>`).join('')}</optgroup>` : '') +
+    `<optgroup label="${inLake.length ? 'Not recorded here' : 'All species'}">${other.map(s => `<option value="${s.k}">${s.n}</option>`).join('')}</optgroup>`;
+  sel.value = S.species;
+  const ms = $('#sel-month');
+  if (!ms.options.length) ms.innerHTML = MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join('');
+  ms.value = S.month;
+}
+
+/* ===================== GPS ===================== */
+let gpsWatch;
+function startGPS() {
+  if (gpsWatch || !navigator.geolocation) return;
+  gpsWatch = navigator.geolocation.watchPosition(p => {
+    S.pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+    if (map) { if (!meMarker) meMarker = L.marker([S.pos.lat, S.pos.lng], { icon: L.divIcon({ className: '', html: '<div class="me-icon"></div>', iconSize: [18, 18] }), interactive: false, zIndexOffset: 1000 }).addTo(map); else meMarker.setLatLng([S.pos.lat, S.pos.lng]); }
+  }, e => { if (e.code === 1) toast('Location is off. Allow it in your browser settings to see yourself on the map.'); }, { enableHighAccuracy: true, maximumAge: 5000 });
+}
+function getPosOnce() {
+  return new Promise((res, rej) => navigator.geolocation ? navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }), rej, { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }) : rej(new Error('No GPS')));
+}
+
+/* ===================== camera guide ===================== */
+const CAM = { stream: null, heading: null, beta: 90, gamma: 0, nudge: 0, fov: 55, raf: 0, absolute: false };
+async function startCamera() {
+  if (!S.lake) { toast('Pick a lake first.'); show('lakes'); return; }
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const p = await DeviceOrientationEvent.requestPermission(); if (p !== 'granted') throw new Error('Compass permission was declined.');
+    }
+    CAM.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    const v = $('#cam-video'); v.srcObject = CAM.stream; await v.play();
+    $('#cam-start').classList.add('hidden');
+    window.addEventListener('deviceorientationabsolute', onOrient, true);
+    window.addEventListener('deviceorientation', onOrient, true);
+    if (!S.guide) S.guide = computeGuide(S.lake, S.species, S.month, S.wx, S.catches);
+    loopCam();
+  } catch (e) { toast(e.message || 'Camera unavailable'); }
+}
+function stopCamera() {
+  if (CAM.stream) { CAM.stream.getTracks().forEach(t => t.stop()); CAM.stream = null; }
+  cancelAnimationFrame(CAM.raf);
+  window.removeEventListener('deviceorientationabsolute', onOrient, true);
+  window.removeEventListener('deviceorientation', onOrient, true);
+  const st = $('#cam-start'); if (st) st.classList.remove('hidden');
+}
+function onOrient(e) {
+  let h = null;
+  if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+  else if (e.absolute || e.type === 'deviceorientationabsolute') { if (e.alpha != null) { h = 360 - e.alpha; CAM.absolute = true; } }
+  else if (CAM.absolute) return; // ignore relative events once we have absolute
+  if (h != null) { const so = (screen.orientation && screen.orientation.angle) || window.orientation || 0; const nh = (h + so + 360) % 360;
+    CAM.heading = CAM.heading == null ? nh : CAM.heading + ((((nh - CAM.heading) + 540) % 360) - 180) * 0.25; }
+  if (e.beta != null) { CAM.beta = CAM.beta + (e.beta - CAM.beta) * 0.3; CAM.gamma = CAM.gamma + (e.gamma - CAM.gamma) * 0.3; }
+}
+function camTargets() {
+  const t = [];
+  (S.guide?.spots || []).forEach((s, i) => t.push({ lat: s.lat, lng: s.lng, kind: 'spot', label: `Spot ${i + 1}`, sub: `${s.depth} m · ${s.why}` }));
+  for (const c of S.catches) if (c.lat != null) t.push({ lat: c.lat, lng: c.lng, kind: 'catch', label: SP[c.species]?.n || c.species, sub: `${c.angler}${c.length_cm ? ' · ' + c.length_cm + ' cm' : ''}`, col: SP[c.species]?.col });
+  for (const a of S.lake.access) t.push({ lat: a.lat, lng: a.lng, kind: 'access', label: a.name || a.type, sub: a.type });
+  for (const a of S.lake.activity) if (S.guide?.sp?.act.some(n => a.type.startsWith(n))) { const c = centroidOfRing(a.polys[0][0]); t.push({ lat: c.lat, lng: c.lng, kind: 'spawn', label: a.type.replace(' Area', ''), sub: 'mapped by MNR' }); }
+  return t;
+}
+function loopCam() {
+  const cv = $('#cam-canvas'), ctx = cv.getContext('2d');
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const draw = () => {
+    CAM.raf = requestAnimationFrame(draw);
+    const W = cv.clientWidth, H = cv.clientHeight;
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+    const read = $('#cam-read');
+    if (!S.pos) { read.textContent = 'Waiting for GPS…'; drawRadar([]); return; }
+    if (CAM.heading == null) { read.textContent = 'Waiting for compass… move the phone in a slow figure 8.'; drawRadar([]); return; }
+    const heading = (CAM.heading + CAM.nudge + 360) % 360;
+    const hfov = CAM.fov, ppd = W / hfov;
+    const tilt = 90 - CAM.beta; // + = looking down
+    const horizon = H / 2 - tilt * ppd;
+    ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(-CAM.gamma * D2R * (Math.abs(CAM.gamma) < 45 ? 1 : 0)); ctx.translate(-W / 2, -H / 2);
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.setLineDash([6, 8]); ctx.beginPath(); ctx.moveTo(-W, horizon); ctx.lineTo(2 * W, horizon); ctx.stroke(); ctx.setLineDash([]);
+    const targets = camTargets().map(t => { const d = dist(S.pos, t), b = bearing(S.pos, t); return { ...t, d, b, rel: ((b - heading + 540) % 360) - 180 }; }).filter(t => t.d < 2500).sort((a, b) => b.d - a.d);
+    const EYE = 1.4;
+    let nearestSpot = null;
+    const drawn = [];
+    for (const t of targets) { // far to near, so near pins sit on top
+      if (t.kind === 'spot' && (!nearestSpot || t.d < nearestSpot.d)) nearestSpot = t;
+      if (Math.abs(t.rel) > hfov / 2 + 8) continue;
+      const x = W / 2 + t.rel * ppd, y = horizon + Math.atan2(EYE, Math.max(t.d, 3)) / D2R * ppd;
+      const s = Math.max(14, Math.min(46, 1600 / (t.d + 30)));
+      drawPin(ctx, x, y, s, t);
+      drawn.push({ x, y, s, t });
+    }
+    // labels: nearest first, skip any that would overlap one already placed
+    const boxes = [];
+    ctx.font = '700 14px "Atkinson Hyperlegible",sans-serif'; ctx.textAlign = 'center';
+    for (const p of drawn.reverse()) {
+      const label = `${p.t.label} · ${fmtDist(p.t.d)}`, w = ctx.measureText(label).width + 14;
+      const bx = p.x - w / 2, by = p.y - p.s * 2.75 - 26;
+      if (boxes.some(b => bx < b[0] + b[2] && bx + w > b[0] && by < b[1] + 24 && by + 24 > b[1])) continue;
+      boxes.push([bx, by, w]);
+      ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.fillRect(bx, by, w, 22);
+      ctx.fillStyle = '#1F3A2C'; ctx.fillText(label, p.x, by + 16);
+    }
+    ctx.restore();
+    // edge arrow to nearest spot when off screen
+    if (nearestSpot && Math.abs(nearestSpot.rel) > hfov / 2) {
+      const left = nearestSpot.rel < 0; ctx.fillStyle = '#F05A1A'; ctx.beginPath();
+      const x = left ? 18 : W - 18, y = H / 2; ctx.moveTo(x, y); ctx.lineTo(x + (left ? 22 : -22), y - 16); ctx.lineTo(x + (left ? 22 : -22), y + 16); ctx.fill();
+    }
+    read.innerHTML = nearestSpot
+      ? `<b>Nearest likely spot: ${fmtDist(nearestSpot.d)}</b>, ${Math.abs(Math.round(nearestSpot.rel))}° ${nearestSpot.rel < 0 ? 'left' : 'right'} · ${esc(nearestSpot.sub)}<br><span class="small muted">GPS ±${Math.round(S.pos.acc)} m · heading ${Math.round(heading)}° ${compass(heading)}</span>`
+      : `No likely spots for ${esc(S.guide?.sp?.n || 'this fish')} within 2.5 km.<br><span class="small muted">GPS ±${Math.round(S.pos.acc)} m · heading ${Math.round(heading)}°</span>`;
+    drawRadar(targets, heading);
+  };
+  draw();
+}
+const fmtDist = d => d < 1000 ? `${Math.round(d / 5) * 5} m` : `${(d / 1000).toFixed(1)} km`;
+function drawPin(ctx, x, y, s, t) {
+  const col = t.kind === 'spot' ? '#F05A1A' : t.kind === 'catch' ? (t.col || '#B8D400') : t.kind === 'spawn' ? '#C03A6A' : '#1F3A2C';
+  ctx.save();
+  ctx.globalAlpha = .9; ctx.strokeStyle = col; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.ellipse(x, y, s * 1.4, s * .45, 0, 0, Math.PI * 2); ctx.stroke(); // ring on the water
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s * 2.2); ctx.stroke();
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y - s * 2.2, s * .55, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function drawRadar(targets, heading = 0) {
+  const c = $('#radar'), ctx = c.getContext('2d'), W = c.width, r = W / 2, RANGE = 500;
+  ctx.clearRect(0, 0, W, W);
+  ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 2;
+  for (const f of [.33, .66]) { ctx.beginPath(); ctx.arc(r, r, r * f, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.beginPath(); ctx.moveTo(r, r); ctx.arc(r, r, r, -Math.PI / 2 - CAM.fov / 2 * D2R, -Math.PI / 2 + CAM.fov / 2 * D2R); ctx.fill();
+  for (const t of targets) {
+    if (t.d > RANGE) continue;
+    const a = (t.rel - 90) * D2R, rr = t.d / RANGE * (r - 8);
+    ctx.fillStyle = t.kind === 'spot' ? '#F05A1A' : t.kind === 'catch' ? '#B8D400' : t.kind === 'spawn' ? '#E07AA0' : '#fff';
+    ctx.beginPath(); ctx.arc(r + Math.cos(a) * rr, r + Math.sin(a) * rr, t.kind === 'spot' ? 10 : 7, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(r, r, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.font = '700 22px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('500 m', r, W - 10);
+}
+
+/* ===================== catch log ===================== */
+async function renderLog() {
+  const f = $('#log-filter').value;
+  let list = [];
+  const pending = (await idb.all('outbox')).map(c => ({ ...c, pending: 1 }));
+  if (f === 'lake' && S.lake) list = S.catches;
+  else {
+    let server = [];
+    if (navigator.onLine) { try { server = (await api('/api/catches')).catches; } catch (e) {} }
+    else for (const l of await idb.all('lakes')) server.push(...l.catches);
+    list = [...pending, ...server.filter(c => !pending.some(p => p.id === c.id))];
+    if (f === 'me') list = list.filter(c => c.angler.toLowerCase() === S.me.toLowerCase());
+  }
+  $('#log-pending').innerHTML = pending.length ? `<p class="banner small">${pending.length} catch${pending.length > 1 ? 'es' : ''} waiting for signal to sync.</p>` : '';
+  if (f === 'lake' && !S.lake) { $('#log-list').innerHTML = '<li class="muted" style="padding:14px 4px">Pick a lake to see the crew’s catches there.</li>'; return; }
+  $('#log-list').innerHTML = list.length ? list.map(c => {
+    const s = SP[c.species];
+    const img = c.pending ? (c.photo ? `<img class="photo-thumb" src="${c.photo}" alt="">` : fishArt(s)) : (c.has_photo ? `<img class="photo-thumb" loading="lazy" src="/api/photo/${encodeURIComponent(c.id)}?k=${encodeURIComponent(S.code)}" alt="">` : fishArt(s));
+    return `<li><div class="li">${img}<div class="li-main"><strong>${esc(s?.n || c.species)}${c.length_cm ? ` · ${c.length_cm} cm` : ''}${c.weight_kg ? ` · ${c.weight_kg}${c.weight_est ? '≈' : ''} kg` : ''}</strong>
+      <span class="small muted">${esc(c.angler)} · ${esc(c.lake || '')} · ${new Date(c.caught_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}${c.depth_m ? ` · ${c.depth_m} m` : ''}${c.bait ? ` · ${esc(c.bait)}` : ''}</span>
+      <div>${c.released ? '<span class="tag saved">Released</span> ' : ''}${c.pending ? '<span class="tag pending">Not synced</span>' : ''}</div></div>
+      ${c.angler.toLowerCase() === S.me.toLowerCase() && !c.pending ? `<button class="btn sm ghost" data-delcatch="${esc(c.id)}" aria-label="Delete">✕</button>` : ''}</div></li>`;
+  }).join('') : '<li class="muted" style="padding:14px 4px">No catches logged yet. The first one sets the bar.</li>';
+}
+function fishArt(s) {
+  const c = s?.col || '#7FB3C8';
+  return `<svg class="photo-thumb" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="10" fill="#D7ECF0"/><path d="M10 32c8-10 22-12 34-6l8-6v24l-8-6c-12 6-26 4-34-6z" fill="${c}"/><circle cx="18" cy="30" r="2" fill="#fff"/></svg>`;
+}
+
+function openAddCatch(pre = {}) {
+  if (!S.lake) { toast('Pick a lake first.'); show('lakes'); return; }
+  const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  const opts = SPECIES.map(s => `<option value="${s.k}" ${s.k === (pre.species || S.species) ? 'selected' : ''}>${s.n}</option>`).join('');
+  const m = sheet('Log a catch', `
+    <div class="field"><label for="c-sp">Species</label><select id="c-sp">${opts}</select><span class="small" id="c-prot"></span></div>
+    <div class="grid2">
+      <div class="field"><label for="c-len">Length (cm)</label><input id="c-len" type="number" inputmode="decimal" step="0.5" value="${pre.length || ''}"></div>
+      <div class="field"><label for="c-wt">Weight (kg)</label><input id="c-wt" type="number" inputmode="decimal" step="0.01" placeholder="auto from length"></div>
+    </div>
+    <p class="small muted" id="c-est"></p>
+    <div class="row"><button class="btn" id="c-photo">Add photo</button><button class="btn" id="c-measure">Measure from photo</button></div>
+    <div id="c-photo-prev"></div>
+    <div class="field"><label>Where</label><div class="row"><span id="c-where" class="small" style="flex:1">${pre.lat != null ? `Map point (${pre.lat.toFixed(5)}, ${pre.lng.toFixed(5)})` : 'Getting your GPS…'}</span><button class="btn sm ghost" id="c-gps">Use my GPS</button></div></div>
+    <div class="grid2">
+      <div class="field"><label for="c-depth">Depth (m)</label><input id="c-depth" type="number" inputmode="decimal" step="0.1" value="${pre.depth ?? ''}"></div>
+      <div class="field"><label for="c-when">When</label><input id="c-when" type="datetime-local" value="${now.toISOString().slice(0, 16)}"></div>
+    </div>
+    <div class="field"><label for="c-bait">Bait or lure</label><input id="c-bait" type="text" placeholder="e.g. jig and minnow"></div>
+    <div class="field"><label for="c-angler">Caught by</label><input id="c-angler" type="text" value="${esc(S.me)}"></div>
+    <div class="field"><label><input type="checkbox" id="c-rel"> Released</label></div>
+    <div class="field"><label for="c-notes">Notes</label><textarea id="c-notes"></textarea></div>
+    <button class="btn hot" id="c-save" style="width:100%">Save catch</button>`);
+  const st = { lat: pre.lat ?? null, lng: pre.lng ?? null, photo: null, est: false };
+  const upd = () => {
+    const sp = $('#c-sp').value, L = parseFloat($('#c-len').value);
+    $('#c-prot').innerHTML = SP[sp]?.protected ? `<span class="tag protected">Protected — release</span>` : SP[sp]?.release ? esc(SP[sp].release) : '';
+    const e = estWeightKg(sp, L);
+    $('#c-est').textContent = e ? `Estimated ${e.kg.toFixed(2)} kg (likely ${e.lo.toFixed(2)}–${e.hi.toFixed(2)} kg)${e.verified ? '' : ' — rough formula for this species'}. Leave weight blank to use it, or type a scale reading.` : '';
+  };
+  $('#c-sp').onchange = upd; $('#c-len').oninput = upd; upd();
+  const gps = async () => { $('#c-where').textContent = 'Getting your GPS…'; try { const p = await getPosOnce(); st.lat = p.lat; st.lng = p.lng; $('#c-where').textContent = `Your GPS (±${Math.round(p.acc)} m)`; } catch (e) { $('#c-where').textContent = 'No GPS fix. Long-press the map to pick the spot instead.'; } };
+  if (pre.lat == null) gps();
+  $('#c-gps').onclick = gps;
+  $('#c-photo').onclick = async () => { const d = await pickPhoto(); if (d) { st.photo = d; $('#c-photo-prev').innerHTML = `<img src="${d}" alt="" style="width:100%;border-radius:12px;margin-top:8px">`; } };
+  $('#c-measure').onclick = async () => { const d = st.photo || await pickPhoto(); if (!d) return; st.photo = d; $('#c-photo-prev').innerHTML = `<img src="${d}" alt="" style="width:100%;border-radius:12px;margin-top:8px">`; const cm = await measureFish(d); if (cm) { $('#c-len').value = cm.toFixed(1); upd(); } };
+  $('#c-save').onclick = async () => {
+    const sp = $('#c-sp').value, L = parseFloat($('#c-len').value), wIn = parseFloat($('#c-wt').value);
+    const e = estWeightKg(sp, L);
+    const c = { id: uid(), lid: S.lake.lid, lake: S.lake.name, species: sp, angler: $('#c-angler').value.trim() || S.me,
+      lat: st.lat, lng: st.lng, length_cm: isFinite(L) ? L : null,
+      weight_kg: isFinite(wIn) ? wIn : e ? Math.round(e.kg * 100) / 100 : null, weight_est: !isFinite(wIn) && !!e,
+      depth_m: parseFloat($('#c-depth').value) || null, bait: $('#c-bait').value.trim(), notes: $('#c-notes').value.trim(),
+      released: $('#c-rel').checked, caught_at: new Date($('#c-when').value).getTime() || Date.now(), photo: st.photo };
+    await idb.put('outbox', c);
+    m.close(); toast('Catch saved');
+    await syncOutbox(); await loadCatches();
+    if (S.view === 'map') renderMap(); else renderLog();
+  };
+}
+async function syncOutbox() {
+  if (!navigator.onLine || !S.code) return;
+  const items = await idb.all('outbox'); let n = 0;
+  for (const c of items) { try { await api('/api/catches', { method: 'POST', body: JSON.stringify(c) }); await idb.del('outbox', c.id); n++; } catch (e) { if (e.status === 400 || e.status === 413) { toast(`A catch couldn’t sync: ${e.message}`); } break; } }
+  if (n) { toast(`${n} catch${n > 1 ? 'es' : ''} synced to the crew`); if (S.lake) { await loadCatches(); const rec = await idb.get('lakes', S.lake.lid); if (rec) await saveOffline(true); } }
+}
+
+/* ===================== photos & measuring ===================== */
+function pickPhoto() {
+  return new Promise(res => {
+    const inp = $('#file-photo'); inp.value = '';
+    inp.onchange = () => { const f = inp.files[0]; if (!f) return res(null);
+      const img = new Image(); img.onload = () => { const max = 1600, k = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(img.src); res(c.toDataURL('image/jpeg', 0.72)); };
+      img.onerror = () => res(null); img.src = URL.createObjectURL(f); };
+    inp.click();
+  });
+}
+const REFS = { card: { n: 'Bank or ID card (long edge)', mm: 85.6 }, loonie: { n: 'Loonie (across)', mm: 26.5 }, toonie: { n: 'Toonie (across)', mm: 28 }, custom: { n: 'Something I know the length of', mm: null } };
+function measureFish(dataUrl) {
+  return new Promise(resolve => {
+    const m = sheet('Measure from photo', `
+      <p class="small">For a usable number: lay the fish flat, put the reference right beside it, and shoot from straight above. Anything closer to or farther from the camera than the fish throws it off.</p>
+      <div class="field"><label for="m-ref">Reference in the photo</label><select id="m-ref">${Object.entries(REFS).map(([k, r]) => `<option value="${k}">${r.n}</option>`).join('')}</select></div>
+      <div class="field hidden" id="m-custom-f"><label for="m-custom">Its length (cm)</label><input id="m-custom" type="number" inputmode="decimal" step="0.1" placeholder="e.g. 30 for 30 cm of tape"></div>
+      <ol class="steps"><li id="ms1">Tap both ends of the reference</li><li id="ms2">Tap the tip of the nose, then the end of the tail</li></ol>
+      <div class="measure-stage"><canvas id="m-cv"></canvas></div>
+      <p class="small muted">Drag a dot to fine-tune. Pinch-zoom the page if you need to.</p>
+      <div class="result" id="m-res">—</div>
+      <div class="row"><button class="btn ghost" id="m-reset">Start over</button><button class="btn hot" id="m-use" disabled>Use this length</button></div>`, () => resolve(null));
+    const cv = $('#m-cv'), ctx = cv.getContext('2d'), img = new Image();
+    let pts = [], drag = -1, cm = null;
+    img.onload = () => { cv.width = img.width; cv.height = img.height; draw(); };
+    img.src = dataUrl;
+    $('#m-ref').onchange = () => { $('#m-custom-f').classList.toggle('hidden', $('#m-ref').value !== 'custom'); calc(); };
+    $('#m-custom').oninput = calc;
+    const toImg = ev => { const r = cv.getBoundingClientRect(), t = ev.touches ? ev.touches[0] : ev; return [(t.clientX - r.left) * cv.width / r.width, (t.clientY - r.top) * cv.height / r.height]; };
+    const hitR = () => cv.width / 25;
+    cv.addEventListener('pointerdown', ev => {
+      const p = toImg(ev); drag = pts.findIndex(q => Math.hypot(q[0] - p[0], q[1] - p[1]) < hitR());
+      if (drag < 0 && pts.length < 4) { pts.push(p); drag = pts.length - 1; }
+      cv.setPointerCapture(ev.pointerId); draw(); calc();
+    });
+    cv.addEventListener('pointermove', ev => { if (drag < 0) return; pts[drag] = toImg(ev); draw(); calc(); });
+    cv.addEventListener('pointerup', () => { drag = -1; });
+    $('#m-reset').onclick = () => { pts = []; draw(); calc(); };
+    $('#m-use').onclick = () => { m.close(true); resolve(cm); };
+    function draw() {
+      ctx.drawImage(img, 0, 0);
+      const lw = Math.max(3, cv.width / 250);
+      const seg = (a, b, col) => { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.stroke(); };
+      if (pts.length >= 2) seg(pts[0], pts[1], '#B8D400');
+      if (pts.length >= 4) seg(pts[2], pts[3], '#F05A1A');
+      pts.forEach((p, i) => { ctx.fillStyle = i < 2 ? '#B8D400' : '#F05A1A'; ctx.strokeStyle = '#fff'; ctx.lineWidth = lw; ctx.beginPath(); ctx.arc(p[0], p[1], hitR() * .45, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); });
+      $('#ms1').className = pts.length >= 2 ? 'done' : 'now'; $('#ms2').className = pts.length >= 4 ? 'done' : pts.length >= 2 ? 'now' : '';
+    }
+    function calc() {
+      cm = null;
+      const ref = $('#m-ref').value, refMm = ref === 'custom' ? parseFloat($('#m-custom').value) * 10 : REFS[ref].mm;
+      if (pts.length >= 4 && refMm > 0) {
+        const rp = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]), fp = Math.hypot(pts[3][0] - pts[2][0], pts[3][1] - pts[2][1]);
+        if (rp > 4) cm = fp / rp * refMm / 10;
+      }
+      $('#m-res').textContent = cm ? `${cm.toFixed(1)} cm` : '—';
+      $('#m-use').disabled = !cm;
+    }
+  });
+}
+
+/* ===================== fish guide ===================== */
+function renderFish() {
+  $('#fish-list').innerHTML = SPECIES.map(s => `<li><details><summary>${fishArt(s).replace('photo-thumb', 'species-art')}&nbsp;${esc(s.n)} ${s.protected ? '<span class="tag protected">Protected</span>' : ''}</summary>
+    <p><b>How to tell it apart.</b> ${esc(s.id)}</p>
+    ${s.protected ? '' : `<p><b>Where through the year</b></p><ul>${['ice', 'spring', 'summer', 'fall'].map(p => s.ph[p] ? `<li><b>${{ ice: 'Ice season', spring: 'Spring', summer: 'Summer', fall: 'Fall' }[p]}: ${s.ph[p][0][0]}–${s.ph[p][0][1]} m.</b> ${esc(s.ph[p][1])}</li>` : `<li><b>${{ ice: 'Ice season', spring: 'Spring', summer: 'Summer', fall: 'Fall' }[p]}:</b> not usually fished.</li>`).join('')}</ul>`}
+    <p><b>${s.protected ? 'Keeping it' : 'Prep and cooking'}.</b> ${esc(s.cook)}</p>
+    ${s.protected ? '' : `<p class="banner small"><b>Before you eat it:</b> mercury and other contaminants vary by lake, species and size. Children and anyone who is or may become pregnant have stricter limits. Look up this lake in the <a href="https://www.ontario.ca/page/eating-ontario-fish" target="_blank" rel="noopener">Guide to Eating Ontario Fish</a>. Smaller fish are generally the safer keepers.</p>`}
+  </details></li>`).join('');
+}
+
+/* ===================== sheets ===================== */
+function sheet(title, html, onClose) {
+  const m = document.createElement('div'); m.className = 'modal';
+  m.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="sheet-head"><h2>${esc(title)}</h2><button class="x" aria-label="Close">×</button></div>${html}</div>`;
+  document.body.appendChild(m);
+  const close = (silent) => { m.remove(); if (!silent && onClose) onClose(); };
+  m.querySelector('.x').onclick = () => close();
+  m.addEventListener('click', e => { if (e.target === m) close(); });
+  return { el: m, close };
+}
+
+/* ===================== install (web app) ===================== */
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; $('#btn-install').classList.remove('hidden'); });
+function maybeIOSHint() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent), standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+  if (ios && !standalone) { $('#btn-install').classList.remove('hidden'); }
+}
+$('#btn-install').onclick = async () => {
+  if (deferredPrompt) { deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt = null; $('#btn-install').classList.add('hidden'); }
+  else sheet('Install Dropline', '<p>In Safari, tap the <b>Share</b> button, then <b>Add to Home Screen</b>. Dropline then opens full-screen and works offline for saved lakes.</p>');
+};
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+
+/* ===================== wiring ===================== */
+$('#btn-login').onclick = login;
+$('#in-code').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+for (const b of document.querySelectorAll('nav.tabs button')) b.onclick = () => show(b.dataset.v);
+$('#lake-q').addEventListener('input', e => { clearTimeout(searchTimer); const q = e.target.value.trim(); if (q.length >= 3) searchTimer = setTimeout(() => searchLakes({ q }), 400); });
+$('#lake-q').addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(searchTimer); searchLakes({ q: e.target.value.trim() }); } });
+$('#btn-near').onclick = async () => { try { $('#lake-results').innerHTML = '<p class="muted">Finding you…</p>'; const p = await getPosOnce(); S.pos = p; searchLakes({ lat: p.lat, lng: p.lng }); } catch (e) { $('#lake-results').innerHTML = '<p class="banner warn">Couldn’t get your location. Allow location access or search by name.</p>'; } };
+$('#v-lakes').addEventListener('click', async e => {
+  const lid = e.target.closest('[data-lid]')?.dataset.lid; if (lid) return openLake(lid);
+  const del = e.target.closest('[data-del]')?.dataset.del; if (del) { await idb.del('lakes', del); toast('Removed from this phone'); return renderLakes(); }
+  const act = e.target.closest('[data-act]')?.dataset.act;
+  if (act === 'guide') show('map');
+  if (act === 'save') saveOffline();
+});
+$('#btn-logout').onclick = () => { localStorage.removeItem('dl_code'); location.reload(); };
+$('#sel-species').onchange = e => { S.species = e.target.value; localStorage.setItem('dl_species', S.species); renderMap(); };
+$('#sel-month').onchange = e => { S.month = +e.target.value; renderMap(); };
+$('#btn-panel').onclick = () => { const p = $('#guide-panel'); p.classList.toggle('collapsed'); $('#btn-panel').textContent = p.classList.contains('collapsed') ? 'Show' : 'Hide'; };
+$('#btn-locate').onclick = async () => { startGPS(); try { const p = S.pos || await getPosOnce(); map.setView([p.lat, p.lng], 15); } catch (e) { toast('No GPS fix yet.'); } };
+$('#btn-cam-go').onclick = startCamera;
+$('#btn-cam-tune').onclick = () => $('#cam-tune').classList.toggle('hidden');
+$('#nudge').oninput = e => { CAM.nudge = +e.target.value; $('#nudge-v').textContent = `${CAM.nudge}°`; localStorage.setItem('dl_nudge', CAM.nudge); };
+$('#fov').oninput = e => { CAM.fov = +e.target.value; $('#fov-v').textContent = `${CAM.fov}°`; localStorage.setItem('dl_fov', CAM.fov); };
+$('#btn-add').onclick = () => openAddCatch();
+$('#log-filter').onchange = renderLog;
+$('#log-list').addEventListener('click', async e => {
+  const id = e.target.closest('[data-delcatch]')?.dataset.delcatch; if (!id) return;
+  if (!confirm('Delete this catch for everyone?')) return;
+  try { await api('/api/catches/' + encodeURIComponent(id), { method: 'DELETE' }); toast('Deleted'); if (S.lake) await loadCatches(); renderLog(); } catch (err) { toast(err.message); }
+});
+window.addEventListener('online', () => { syncOutbox(); toast('Back online'); });
+window.addEventListener('offline', () => toast('Offline — saved lakes still work'));
+window.openAddCatch = openAddCatch;
+
+async function boot() {
+  $('#v-login').classList.add('hidden'); $('#tabs').classList.remove('hidden');
+  CAM.nudge = +(localStorage.getItem('dl_nudge') || 0); CAM.fov = +(localStorage.getItem('dl_fov') || 55);
+  $('#nudge').value = CAM.nudge; $('#nudge-v').textContent = `${CAM.nudge}°`; $('#fov').value = CAM.fov; $('#fov-v').textContent = `${CAM.fov}°`;
+  renderFish(); maybeIOSHint();
+  const last = localStorage.getItem('dl_lake');
+  if (last) {
+    const rec = await idb.get('lakes', last);
+    if (rec) { S.lake = rec.bundle; await loadCatches(); S.wxRaw = rec.weather; S.wx = readWeather(rec.weather); }
+  }
+  show('lakes');
+  syncOutbox();
+}
+if (S.me && S.code) boot(); else { $('#v-login').classList.remove('hidden'); $('#in-name').value = S.me; }
+</script>
+</body>
+</html>
