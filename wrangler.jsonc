@@ -13,7 +13,7 @@
       "binding": "DB",
       "database_name": "dropline",
       // STEP 3 in README: paste your D1 database ID here
-      "database_id": "PASTE-YOUR-D1-DATABASE-ID-HERE"
+      "database_id": "e7e66851-e2a7-4d7a-bb99-ee697ced77e9"
     }
   ],
   "observability": { "enabled": true }
