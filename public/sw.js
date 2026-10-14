@@ -1,9 +1,9 @@
 // Dropline service worker: app shell offline. Lake data lives in IndexedDB (saved by the app).
-const SHELL = 'dropline-shell-v2';
+const SHELL = 'dropline-shell-v3';
 const FONTS = 'dropline-fonts-v1';
 const FISH = 'dropline-fish-v1';
 const SHELL_FILES = [
-  '/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png',
+  '/', '/index.html', '/guide.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
 ];
@@ -49,6 +49,34 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // Everything else in the shell: cache first
+  // Our own files: serve the cached copy instantly, refresh it in the background for next launch
+  if (url.origin === self.location.origin) {
+    e.respondWith(caches.open(SHELL).then(async c => {
+      const hit = await c.match(req);
+      const fresh = fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => hit);
+      return hit || fresh;
+    }));
+    return;
+  }
+  // CDN files: cache first
   e.respondWith(caches.match(req).then(hit => hit || fetch(req)));
 });
+
+// ---- alerts ----
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: 'Dropline', body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Dropline', {
+    body: d.body || '', tag: d.tag, icon: '/icon-192.png', badge: '/icon-192.png', data: { url: d.url || '/' },
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const w of wins) { if ('focus' in w) { w.postMessage({ type: 'open', url }); return w.focus(); } }
+    return self.clients.openWindow(url);
+  })());
+});
+self.addEventListener('pushsubscriptionchange', () => {}); // the app re-syncs its subscription each time it opens
