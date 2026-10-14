@@ -35,6 +35,8 @@ export default {
       if (path === '/api/ping') return json({ ok: true });
       if (path === '/api/lakes') return await searchLakes(url);
       if (path.startsWith('/api/lake/')) return await lakeBundle(decodeURIComponent(path.slice(10)), request, ctx);
+      if (path === '/api/fishinfo') return json(await fishCatalog(ctx));
+      if (path.startsWith('/api/fishimg/')) return await fishImage(path.slice(13), ctx);
 
       if (!env.DB) return json({ error: 'Server not configured: D1 database binding "DB" missing.' }, 500);
       await ensureSchema(env.DB);
@@ -266,6 +268,86 @@ async function lakeBundle(lid, request, ctx) {
     ctx.waitUntil(cache.put(cacheKey, new Response(body, { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=604800' } })));
   }
   return new Response(body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+}
+
+// ---------- fish photos (Wikipedia lead images, Wikimedia Commons licences) ----------
+const FISH_TITLES = {
+  walleye: 'Walleye', sauger: 'Sauger', pike: 'Northern pike', muskie: 'Muskellunge',
+  lmb: 'Largemouth bass', smb: 'Smallmouth bass', rockbass: 'Rock bass', crappie: 'Black crappie',
+  bluegill: 'Bluegill', pumpkinseed: 'Pumpkinseed', perch: 'Yellow perch', laker: 'Lake trout',
+  brookie: 'Brook trout', rainbow: 'Rainbow trout', brown: 'Brown trout', splake: 'Splake',
+  chinook: 'Chinook salmon', coho: 'Coho salmon', whitefish: 'Lake whitefish', catfish: 'Channel catfish',
+  bullhead: 'Brown bullhead', carp: 'Common carp', drum: 'Freshwater drum', burbot: 'Burbot',
+  sturgeon: 'Lake sturgeon', eel: 'American eel',
+};
+const WIKI_UA = 'Dropline/1.0 (private family fishing app on Cloudflare Workers)';
+const FISH_CATALOG_VERSION = 1;
+const stripHtml = s => String(s || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+
+async function wikiApi(params) {
+  const p = new URLSearchParams({ action: 'query', format: 'json', formatversion: '2', ...params });
+  const res = await fetch(`https://en.wikipedia.org/w/api.php?${p}`, {
+    headers: { 'User-Agent': WIKI_UA, 'Api-User-Agent': WIKI_UA },
+    cf: { cacheTtl: 2592000, cacheEverything: true },
+  });
+  if (!res.ok) throw new Error(`Wikipedia error ${res.status}`);
+  return res.json();
+}
+
+async function fishCatalog(ctx) {
+  const cache = caches.default;
+  const key = new Request(`https://dropline.cache/fishinfo/${FISH_CATALOG_VERSION}`);
+  const hit = await cache.match(key);
+  if (hit) return hit.json();
+
+  // 1) lead image of each species article (handles redirects / normalised titles)
+  const titles = Object.values(FISH_TITLES);
+  const pg = await wikiApi({ redirects: '1', prop: 'pageimages', piprop: 'thumbnail|name', pithumbsize: '800', titles: titles.join('|') });
+  const q = pg.query || {};
+  const resolve = t => {
+    for (const n of q.normalized || []) if (n.from === t) t = n.to;
+    for (const r of q.redirects || []) if (r.from === t) t = r.to;
+    return t;
+  };
+  const byTitle = new Map((q.pages || []).map(p => [p.title, p]));
+  const out = {};
+  for (const [k, t] of Object.entries(FISH_TITLES)) {
+    const p = byTitle.get(resolve(t));
+    if (p && p.thumbnail && p.pageimage) out[k] = { src: p.thumbnail.source, file: p.pageimage, page: `https://en.wikipedia.org/wiki/${encodeURIComponent(p.title.replace(/ /g, '_'))}` };
+  }
+
+  // 2) author + licence for each image file
+  const files = [...new Set(Object.values(out).map(o => o.file))];
+  if (files.length) {
+    const ii = await wikiApi({ prop: 'imageinfo', iiprop: 'extmetadata', iiextmetadatafilter: 'Artist|LicenseShortName|LicenseUrl',
+      titles: files.map(f => `File:${f}`).join('|') });
+    const meta = new Map();
+    for (const p of (ii.query && ii.query.pages) || []) {
+      const m = p.imageinfo && p.imageinfo[0] && p.imageinfo[0].extmetadata || {};
+      meta.set(p.title.replace(/^File:/, '').replace(/ /g, '_'), {
+        artist: stripHtml(m.Artist && m.Artist.value).slice(0, 120) || 'Unknown',
+        license: stripHtml(m.LicenseShortName && m.LicenseShortName.value) || 'see source',
+        licenseUrl: (m.LicenseUrl && m.LicenseUrl.value) || null,
+      });
+    }
+    for (const o of Object.values(out)) {
+      const m = meta.get(o.file.replace(/ /g, '_')) || {};
+      Object.assign(o, m, { fileUrl: `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(o.file.replace(/ /g, '_'))}` });
+    }
+  }
+  const data = { fish: out, fetchedAt: Date.now() };
+  ctx.waitUntil(cache.put(key, new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=2592000' } })));
+  return data;
+}
+
+async function fishImage(k, ctx) {
+  if (!FISH_TITLES[k]) return new Response('Not found', { status: 404 });
+  const { fish } = await fishCatalog(ctx);
+  const f = fish[k];
+  if (!f || !/^https:\/\/upload\.wikimedia\.org\//.test(f.src)) return new Response('No photo', { status: 404 });
+  const res = await fetch(f.src, { headers: { 'User-Agent': WIKI_UA }, cf: { cacheTtl: 2592000, cacheEverything: true } });
+  if (!res.ok) return new Response('Photo unavailable', { status: 502 });
+  return new Response(res.body, { headers: { 'content-type': res.headers.get('content-type') || 'image/jpeg', 'cache-control': 'private, max-age=2592000' } });
 }
 
 // ---------- catches ----------
