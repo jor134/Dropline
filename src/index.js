@@ -38,8 +38,6 @@ export default {
       if (path === '/api/ping') return json({ ok: true });
       if (path === '/api/lakes') return await searchLakes(url);
       if (path.startsWith('/api/lake/')) return await lakeBundle(decodeURIComponent(path.slice(10)), request, ctx);
-      if (path === '/api/fishinfo') return json(await fishCatalog(ctx));
-      if (path.startsWith('/api/fishimg/')) return await fishImage(path.slice(13), ctx);
 
       if (!env.DB) return json({ error: 'Server not configured: D1 database binding "DB" missing.' }, 500);
       await ensureSchema(env.DB);
@@ -49,6 +47,10 @@ export default {
         if (r.ok && r.c.isNew) ctx.waitUntil(notifyCatch(env, r.c).catch(() => {}));
         return json(r.ok ? { ok: true, id: r.c.id } : { error: r.error }, r.ok ? 200 : r.status);
       }
+      if (path === '/api/fishinfo') return json(await fishInfo(env, ctx));
+      if (path.startsWith('/api/fishimg/')) return await fishImage(env, path.slice(13), ctx);
+      if (path.startsWith('/api/fishphoto/') && request.method === 'POST') return await setFishPhoto(env, path.slice(15), request);
+      if (path.startsWith('/api/fishphoto/') && request.method === 'DELETE') return await clearFishPhoto(env, path.slice(15));
       if (path === '/api/push/key') return json({ key: (await getVapid(env.DB)).pub });
       if (path === '/api/push/subscribe' && request.method === 'POST') return await pushSubscribe(env, request, url);
       if (path === '/api/push/unsubscribe' && request.method === 'POST') { const b = await request.json(); await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(String(b.endpoint || '')).run(); return json({ ok: true }); }
@@ -362,14 +364,51 @@ async function fishCatalog(ctx) {
   return data;
 }
 
-async function fishImage(k, ctx) {
+// Wikipedia catalogue merged with the crew's own photos (crew photos win)
+async function fishInfo(env, ctx) {
+  let wiki = {};
+  try { wiki = (await fishCatalog(ctx)).fish; } catch (e) {}
+  const out = {};
+  for (const [k, f] of Object.entries(wiki)) out[k] = { ...f, v: 'w' + FISH_CATALOG_VERSION };
+  const { results } = await env.DB.prepare('SELECT k, angler, updated_at FROM species_photos').all();
+  for (const r of results) out[r.k] = { custom: true, artist: r.angler, license: 'crew photo', v: 'c' + r.updated_at, wiki: !!wiki[r.k] };
+  return { fish: out };
+}
+
+async function fishImage(env, k, ctx) {
   if (!FISH_TITLES[k]) return new Response('Not found', { status: 404 });
+  const own = await env.DB.prepare('SELECT mime, data FROM photos WHERE id = ?').bind('species:' + k).first();
+  if (own) {
+    const bin = Uint8Array.from(atob(own.data), c => c.charCodeAt(0));
+    return new Response(bin, { headers: { 'content-type': own.mime, 'cache-control': 'private, max-age=2592000' } });
+  }
   const { fish } = await fishCatalog(ctx);
   const f = fish[k];
   if (!f || !/^https:\/\/upload\.wikimedia\.org\//.test(f.src)) return new Response('No photo', { status: 404 });
   const res = await fetch(f.src, { headers: { 'User-Agent': WIKI_UA }, cf: { cacheTtl: 2592000, cacheEverything: true } });
   if (!res.ok) return new Response('Photo unavailable', { status: 502 });
   return new Response(res.body, { headers: { 'content-type': res.headers.get('content-type') || 'image/jpeg', 'cache-control': 'private, max-age=2592000' } });
+}
+
+async function setFishPhoto(env, k, request) {
+  if (!FISH_TITLES[k]) return json({ error: 'Unknown species' }, 404);
+  const angler = (request.headers.get('X-Angler') || '').slice(0, 40);
+  const b = await request.json();
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(b.photo || '');
+  if (!m) return json({ error: 'Bad photo' }, 400);
+  if (m[2].length > MAX_PHOTO_CHARS) return json({ error: 'Photo too large' }, 413);
+  await env.DB.batch([
+    env.DB.prepare('INSERT OR REPLACE INTO photos (id, mime, data) VALUES (?, ?, ?)').bind('species:' + k, m[1], m[2]),
+    env.DB.prepare('INSERT OR REPLACE INTO species_photos (k, angler, updated_at) VALUES (?, ?, ?)').bind(k, angler || 'Crew', Date.now()),
+  ]);
+  return json({ ok: true });
+}
+async function clearFishPhoto(env, k) {
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM photos WHERE id = ?').bind('species:' + k),
+    env.DB.prepare('DELETE FROM species_photos WHERE k = ?').bind(k),
+  ]);
+  return json({ ok: true });
 }
 
 // ---------- catches ----------
@@ -386,6 +425,7 @@ async function ensureSchema(db) {
     db.prepare(`CREATE TABLE IF NOT EXISTS push_subs (endpoint TEXT PRIMARY KEY, p256dh TEXT, auth TEXT, angler TEXT,
       lakes TEXT, catches INTEGER, weather INTEGER, created_at INTEGER, updated_at INTEGER)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY, sent_at INTEGER)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS species_photos (k TEXT PRIMARY KEY, angler TEXT, updated_at INTEGER)`),
   ]);
   schemaReady = true;
 }
