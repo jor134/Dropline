@@ -763,19 +763,22 @@ function measureFish(dataUrl) {
 }
 
 /* ===================== fish guide ===================== */
-const fishImgUrl = k => `/api/fishimg/${k}?k=${encodeURIComponent(S.code)}`;
+const fishImgUrl = k => `/api/fishimg/${k}?v=${encodeURIComponent((S.fishInfo && S.fishInfo[k] && S.fishInfo[k].v) || 'w')}&k=${encodeURIComponent(S.code)}`;
 function fishCredit(k) {
   const f = S.fishInfo && S.fishInfo[k];
   if (!f) return '';
+  if (f.custom) return `<p class="small muted credit">Photo: ${esc(f.artist)} (crew)</p>`;
   const lic = f.licenseUrl ? `<a href="${esc(f.licenseUrl)}" target="_blank" rel="noopener">${esc(f.license)}</a>` : esc(f.license || '');
   return `<p class="small muted credit">Photo: ${esc(f.artist || 'Unknown')}, ${lic}, via <a href="${esc(f.fileUrl || f.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></p>`;
 }
-async function loadFishInfo() {
+async function loadFishInfo(keepOpen) {
   if (!navigator.onLine) return;
   try {
     const { fish } = await api('/api/fishinfo');
     S.fishInfo = fish; localStorage.setItem('dl_fishinfo', JSON.stringify(fish));
+    const open = [...document.querySelectorAll('#fish-list details[open] [data-ownphoto]')].map(b => b.dataset.ownphoto);
     renderFish();
+    for (const k of open) { const b = document.querySelector(`#fish-list [data-ownphoto="${k}"]`); if (b) b.closest('details').open = true; }
     // quietly fetch every photo once so the guide works offline (the service worker keeps them)
     for (const k of Object.keys(fish)) fetch(fishImgUrl(k)).catch(() => {});
   } catch (e) {}
@@ -789,12 +792,31 @@ function renderFish() {
   const has = k => !S.fishInfo || !!S.fishInfo[k];
   $('#fish-list').innerHTML = SPECIES.map(s => `<li><details><summary>${has(s.k) ? `<img class="fish-thumb" data-fish="${s.k}" loading="lazy" src="${fishImgUrl(s.k)}" alt="">` : fishArt(s).replace('photo-thumb', 'fish-thumb')}<span style="flex:1">${esc(s.n)}</span>${s.protected ? '<span class="tag protected">Protected</span>' : ''}</summary>
     ${has(s.k) ? `<img class="fish-hero" data-fish="${s.k}" data-credit-for="1" loading="lazy" src="${fishImgUrl(s.k)}" alt="${esc(s.n)}"><div data-credit="${s.k}">${fishCredit(s.k)}</div>` : ''}
+    <div class="row" style="margin:4px 0 10px"><button class="btn sm ghost" data-ownphoto="${s.k}">${S.fishInfo && S.fishInfo[s.k] && S.fishInfo[s.k].custom ? 'Replace crew photo' : 'Use my own photo'}</button>${S.fishInfo && S.fishInfo[s.k] && S.fishInfo[s.k].custom ? `<button class="btn sm ghost" data-wikiphoto="${s.k}">${S.fishInfo[s.k].wiki ? 'Back to Wikipedia photo' : 'Remove crew photo'}</button>` : ''}</div>
     <p><b>How to tell it apart.</b> ${esc(s.id)}</p>
     ${s.protected ? '' : `<p><b>Where through the year</b></p><ul>${['ice', 'spring', 'summer', 'fall'].map(p => s.ph[p] ? `<li><b>${{ ice: 'Ice season', spring: 'Spring', summer: 'Summer', fall: 'Fall' }[p]}: ${s.ph[p][0][0]}–${s.ph[p][0][1]} m.</b> ${esc(s.ph[p][1])}</li>` : `<li><b>${{ ice: 'Ice season', spring: 'Spring', summer: 'Summer', fall: 'Fall' }[p]}:</b> not usually fished.</li>`).join('')}</ul>`}
     <p><b>${s.protected ? 'Keeping it' : 'Prep and cooking'}.</b> ${esc(s.cook)}</p>
     ${s.protected ? '' : `<p class="banner small"><b>Before you eat it:</b> mercury and other contaminants vary by lake, species and size. Children and anyone who is or may become pregnant have stricter limits. Look up this lake in the <a href="https://www.ontario.ca/page/eating-ontario-fish" target="_blank" rel="noopener">Guide to Eating Ontario Fish</a>. Smaller fish are generally the safer keepers.</p>`}
   </details></li>`).join('');
   hookFishImages($('#fish-list'));
+}
+
+async function setOwnFishPhoto(k) {
+  if (!navigator.onLine) { toast('Needs signal to share a photo with the crew.'); return; }
+  const d = await pickPhoto(); if (!d) return;
+  const s = SP[k];
+  const m = sheet(`Photo for ${s.n}`, `<img src="${d}" alt="" style="width:100%;max-height:50vh;object-fit:contain;border-radius:12px;background:var(--paper)">
+    <p class="small">This replaces the ${esc(s.n.toLowerCase())} photo for everyone in the crew. A side-on shot showing the whole fish works best.</p>
+    <button class="btn hot" id="own-save" style="width:100%">Use this photo for everyone</button>`);
+  $('#own-save').onclick = async () => {
+    $('#own-save').disabled = true;
+    try { await api('/api/fishphoto/' + k, { method: 'POST', body: JSON.stringify({ photo: d }) }); m.close(true); toast('Photo updated for the crew'); await loadFishInfo(true); }
+    catch (e) { toast(e.message); $('#own-save').disabled = false; }
+  };
+}
+async function clearOwnFishPhoto(k) {
+  if (!confirm('Remove the crew photo for everyone?')) return;
+  try { await api('/api/fishphoto/' + k, { method: 'DELETE' }); toast('Crew photo removed'); await loadFishInfo(true); } catch (e) { toast(e.message); }
 }
 
 /* ===================== sheets ===================== */
@@ -934,6 +956,10 @@ $('#nudge').oninput = e => { CAM.nudge = +e.target.value; $('#nudge-v').textCont
 $('#fov').oninput = e => { CAM.fov = +e.target.value; $('#fov-v').textContent = `${CAM.fov}°`; localStorage.setItem('dl_fov', CAM.fov); };
 $('#btn-add').onclick = () => openAddCatch();
 $('#btn-watch').onclick = openWatchGuide;
+$('#fish-list').addEventListener('click', e => {
+  const own = e.target.closest('[data-ownphoto]')?.dataset.ownphoto; if (own) return setOwnFishPhoto(own);
+  const wiki = e.target.closest('[data-wikiphoto]')?.dataset.wikiphoto; if (wiki) return clearOwnFishPhoto(wiki);
+});
 $('#log-filter').onchange = renderLog;
 $('#log-list').addEventListener('click', async e => {
   const id = e.target.closest('[data-delcatch]')?.dataset.delcatch; if (!id) return;

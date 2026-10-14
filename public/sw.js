@@ -1,7 +1,7 @@
 // Dropline service worker: app shell offline. Lake data lives in IndexedDB (saved by the app).
 const SHELL = 'dropline-shell-v3';
 const FONTS = 'dropline-fonts-v1';
-const FISH = 'dropline-fish-v1';
+const FISH = 'dropline-fish-v2';
 const SHELL_FILES = [
   '/', '/index.html', '/guide.js', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
@@ -22,7 +22,7 @@ self.addEventListener('fetch', e => {
 
   // Fish photos: keep once seen so the fish guide works offline (keyed without the group code)
   if (url.pathname.startsWith('/api/fishimg/')) {
-    const key = new Request(url.origin + url.pathname);
+    const key = new Request(url.origin + url.pathname + '?v=' + (url.searchParams.get('v') || ''));
     e.respondWith(caches.open(FISH).then(async c => {
       const hit = await c.match(key); if (hit) return hit;
       const res = await fetch(req); if (res.ok) c.put(key, res.clone()); return res;
