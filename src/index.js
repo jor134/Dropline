@@ -51,6 +51,24 @@ export default {
       if (path.startsWith('/api/fishimg/')) return await fishImage(env, path.slice(13), ctx);
       if (path.startsWith('/api/fishphoto/') && request.method === 'POST') return await setFishPhoto(env, path.slice(15), request);
       if (path.startsWith('/api/fishphoto/') && request.method === 'DELETE') return await clearFishPhoto(env, path.slice(15));
+      if (path === '/api/config' && request.method === 'GET') {
+        const { results } = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN ('shortcut_catch','shortcut_where')").all();
+        const o = Object.fromEntries(results.map(r => [r.key, r.value]));
+        return json({ shortcutCatch: o.shortcut_catch || null, shortcutWhere: o.shortcut_where || null });
+      }
+      if (path === '/api/config' && request.method === 'POST') {
+        const b = await request.json();
+        const ok = v => v === '' || v == null || /^https:\/\/www\.icloud\.com\/shortcuts\/[0-9a-f]{32}\/?$/i.test(String(v).trim());
+        if (!ok(b.shortcutCatch) || !ok(b.shortcutWhere)) return json({ error: 'That doesn’t look like an iCloud shortcut link (https://www.icloud.com/shortcuts/…).' }, 400);
+        const st = [];
+        for (const [k, v] of [['shortcut_catch', b.shortcutCatch], ['shortcut_where', b.shortcutWhere]]) {
+          if (v === undefined) continue;
+          st.push(v ? env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind(k, String(v).trim())
+                    : env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(k));
+        }
+        if (st.length) await env.DB.batch(st);
+        return json({ ok: true });
+      }
       if (path === '/api/push/key') return json({ key: (await getVapid(env.DB)).pub });
       if (path === '/api/push/subscribe' && request.method === 'POST') return await pushSubscribe(env, request, url);
       if (path === '/api/push/unsubscribe' && request.method === 'POST') { const b = await request.json(); await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(String(b.endpoint || '')).run(); return json({ ok: true }); }
