@@ -629,12 +629,23 @@ const metres = d => d < 1000 ? `${Math.round(d / 10) * 10} metres` : `${(d / 100
 const COMPASS_WORDS = { N: 'north', NE: 'north-east', E: 'east', SE: 'south-east', S: 'south', SW: 'south-west', W: 'west', NW: 'north-west' };
 
 async function quickCatch(env, request, ctx) {
-  const b = await readBody(request);
-  const sp = matchSpecies(b.species);
-  if (!sp) return text(`I didn't recognise "${String(b.species || '').slice(0, 40)}". Try walleye, pike, bass, perch, crappie or trout.`, 400);
-  const angler = String(b.angler || b.name || '').trim();
-  if (!angler) return text('Add your name to the shortcut first.', 400);
-  const lat = firstNum(b.lat ?? b.latitude), lng = b.lng ?? b.longitude;
+  const raw = await readBody(request);
+  // forgiving field names: any capitalisation, a few common alternatives, URL parameters as a fallback
+  const b = {};
+  const url = new URL(request.url);
+  for (const [k, v] of url.searchParams) if (k !== 'k') b[k.toLowerCase().trim()] = v;
+  for (const [k, v] of Object.entries(raw || {})) b[String(k).toLowerCase().trim()] = v;
+  const pickF = (...names) => { for (const n of names) { const v = b[n]; if (v != null && String(v).trim() !== '') return v; } return null; };
+  const sent = Object.keys(b).map(k => `${k}${b[k] == null || String(b[k]).trim() === '' ? ' (empty)' : ''}`).join(', ') || 'nothing';
+  const speciesIn = pickF('species', 'fish', 'catch', 'what');
+  if (!speciesIn) return text(`I didn't get a fish name. The shortcut sent: ${sent}. In Get Contents of URL, the "species" field needs the species variable (blue chip), not typed text.`, 400);
+  const sp = matchSpecies(speciesIn);
+  if (!sp) return text(`I didn't recognise "${String(speciesIn).slice(0, 40)}". Try walleye, pike, bass, perch, crappie or trout.`, 400);
+  const angler = String(pickF('angler', 'name', 'who', 'caughtby') || '').trim();
+  if (!angler) return text(`I didn't get who caught it. The shortcut sent: ${sent}.`, 400);
+  b.length = pickF('length', 'length_cm', 'size', 'cm'); b.released = pickF('released', 'release'); b.bait = pickF('bait', 'lure');
+  b.depth = pickF('depth', 'depth_m'); b.notes = pickF('notes', 'note');
+  const lat = firstNum(pickF('lat', 'latitude')), lng = pickF('lng', 'lon', 'long', 'longitude');
   const lngN = lng == null ? null : parseFloat(String(lng).replace(',', '.'));
   let lake = null;
   if (lat != null && isFinite(lngN)) { try { lake = await detectLake(lat, lngN); } catch (e) {} }
