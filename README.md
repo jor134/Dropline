@@ -1,0 +1,43 @@
+# Dropline
+
+Family-and-friends fishing companion for Ontario lakes, running as a Cloudflare Worker.
+
+- **Guide**: where a species should be this month, drawn on the lake's real depth contours, with up to 8 ranked likely spots.
+- **Camera**: likely spots, crew catches, launches and spawning areas floating over the water in the direction they are.
+- **Log**: one shared catch map for the whole crew, with photos. Works offline and syncs when you get signal.
+- **Measure**: length from a photo with a card or coin beside the fish; weight estimated from length.
+- **Fish**: ID, seasonal depths and cooking notes for 24 Ontario species, plus the eating-advisory link.
+
+## Files
+
+```
+wrangler.jsonc          Worker config (assets + D1 database)
+src/index.js            The Worker: API + Ontario data proxy
+public/index.html       The whole app
+public/sw.js            Offline support
+public/manifest.webmanifest, icon.svg, icon-192.png, icon-512.png, apple-touch-icon.png
+```
+
+## Setup (GitHub web UI + Cloudflare dashboard, no installs)
+
+1. **GitHub**: create a new repository called `dropline`. Use **Add file → Upload files** and drag in `wrangler.jsonc`, the `src` folder and the `public` folder. Commit.
+2. **Cloudflare → Storage & databases → D1 → Create database**. Name it `dropline`. Copy its **Database ID**.
+3. **GitHub**: open `wrangler.jsonc`, click the pencil, replace `PASTE-YOUR-D1-DATABASE-ID-HERE` with that ID. Commit.
+4. **Cloudflare → Workers & Pages → Create → Import a repository**. Pick `dropline`. Leave the build command empty and the deploy command as `npx wrangler deploy`. Deploy.
+5. **Cloudflare → your `dropline` Worker → Settings → Variables and secrets → Add**. Type: **Secret**. Name: `GROUP_CODE`. Value: the code your crew will type in (make it something not guessable). Save and deploy.
+6. Open the `dropline.<your-subdomain>.workers.dev` URL on your phone, enter your name and the group code, then **Share → Add to Home Screen** (iPhone) or **Install app** (Android).
+
+The database tables create themselves on the first catch. Every push to GitHub redeploys.
+
+### Optional: email login instead of a shared code
+Cloudflare Access (Zero Trust, free up to 50 users) can put an email one-time-code login in front of the whole app. Keep `GROUP_CODE` as well.
+
+## Before a trip
+
+Open the lake **with signal** and tap **Save for offline**. That stores the depth map, spawning areas, the crew's catches and the 3-day forecast on the phone. The street/satellite base map needs signal; the lake outline, contours and spots work without it.
+
+## Data sources
+
+- Land Information Ontario open data (Ontario MNR), Open Government Licence – Ontario: lake facts and fish species (Aquatic Resource Areas), bathymetry contours, fishing access points, fish spawning/nursery areas.
+- Open-Meteo forecast (no key needed).
+- OpenStreetMap tiles.
