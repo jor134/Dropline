@@ -140,7 +140,7 @@ function estWeightKg(spKey, lengthCm) {
    contours (steep breaks score higher), government spawning areas
    (bonus just before / after spawning only), the crew's catches,
    and wind (windward shores for wind-loving species). */
-function computeGuide(lake, spKey, month, wx, catches) {
+function computeGuide(lake, spKey, month, wx, catches, opts = {}) {
   const sp = SP[spKey];
   const out = { sp, phase: phaseOf(month), spots: [], zone: [], notes: [] };
   if (!sp) return out;
@@ -205,7 +205,7 @@ function computeGuide(lake, spKey, month, wx, catches) {
   }
   const W = Math.max((lake.bbox[2] - lake.bbox[0]) * kx, (lake.bbox[3] - lake.bbox[1]) * ky) / 2 || 1;
 
-  const stride = Math.max(1, Math.floor(cand.length / 40000));
+  const stride = Math.max(1, Math.floor(cand.length / (opts.maxCandidates || 40000)));
   const scored = [];
   for (let i = 0; i < cand.length; i += stride) {
     const v = cand[i];
