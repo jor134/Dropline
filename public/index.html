@@ -142,7 +142,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--pine);outline:none}
 .banner{background:var(--paper);border-left:6px solid var(--lure);padding:10px 12px;border-radius:8px;margin:10px 0}
 .banner.warn{border-left-color:var(--warn)}
 .photo-thumb{width:64px;height:64px;border-radius:10px;object-fit:cover;background:var(--shallow);flex:0 0 64px}
-.species-art{width:64px;height:28px;flex:0 0 64px}
+.fish-thumb{width:72px;height:48px;flex:0 0 72px;border-radius:8px;object-fit:cover;background:var(--shallow);margin-right:12px}
+.fish-hero{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;border-radius:12px;background:var(--shallow);margin:6px 0 4px}
+.credit{margin:0 0 10px}
 details{border-bottom:1px solid var(--rule);padding:8px 0}
 summary{font-weight:700;min-height:44px;display:flex;align-items:center;cursor:pointer}
 .login{max-width:420px;margin:8vh auto 0}
@@ -1017,13 +1019,38 @@ function measureFish(dataUrl) {
 }
 
 /* ===================== fish guide ===================== */
+const fishImgUrl = k => `/api/fishimg/${k}?k=${encodeURIComponent(S.code)}`;
+function fishCredit(k) {
+  const f = S.fishInfo && S.fishInfo[k];
+  if (!f) return '';
+  const lic = f.licenseUrl ? `<a href="${esc(f.licenseUrl)}" target="_blank" rel="noopener">${esc(f.license)}</a>` : esc(f.license || '');
+  return `<p class="small muted credit">Photo: ${esc(f.artist || 'Unknown')}, ${lic}, via <a href="${esc(f.fileUrl || f.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></p>`;
+}
+async function loadFishInfo() {
+  if (!navigator.onLine) return;
+  try {
+    const { fish } = await api('/api/fishinfo');
+    S.fishInfo = fish; localStorage.setItem('dl_fishinfo', JSON.stringify(fish));
+    renderFish();
+    // quietly fetch every photo once so the guide works offline (the service worker keeps them)
+    for (const k of Object.keys(fish)) fetch(fishImgUrl(k)).catch(() => {});
+  } catch (e) {}
+}
+function hookFishImages(root) {
+  for (const img of root.querySelectorAll('img[data-fish]')) {
+    img.onerror = () => { const s = SP[img.dataset.fish]; const w = document.createElement('span'); w.innerHTML = fishArt(s).replace('photo-thumb', img.classList.contains('fish-hero') ? 'fish-hero' : 'fish-thumb'); img.replaceWith(w.firstChild); const c = img.dataset.creditFor && root.querySelector(`[data-credit="${img.dataset.fish}"]`); if (c) c.remove(); };
+  }
+}
 function renderFish() {
-  $('#fish-list').innerHTML = SPECIES.map(s => `<li><details><summary>${fishArt(s).replace('photo-thumb', 'species-art')}&nbsp;${esc(s.n)} ${s.protected ? '<span class="tag protected">Protected</span>' : ''}</summary>
+  const has = k => !S.fishInfo || !!S.fishInfo[k];
+  $('#fish-list').innerHTML = SPECIES.map(s => `<li><details><summary>${has(s.k) ? `<img class="fish-thumb" data-fish="${s.k}" loading="lazy" src="${fishImgUrl(s.k)}" alt="">` : fishArt(s).replace('photo-thumb', 'fish-thumb')}<span style="flex:1">${esc(s.n)}</span>${s.protected ? '<span class="tag protected">Protected</span>' : ''}</summary>
+    ${has(s.k) ? `<img class="fish-hero" data-fish="${s.k}" data-credit-for="1" loading="lazy" src="${fishImgUrl(s.k)}" alt="${esc(s.n)}"><div data-credit="${s.k}">${fishCredit(s.k)}</div>` : ''}
     <p><b>How to tell it apart.</b> ${esc(s.id)}</p>
     ${s.protected ? '' : `<p><b>Where through the year</b></p><ul>${['ice', 'spring', 'summer', 'fall'].map(p => s.ph[p] ? `<li><b>${{ ice: 'Ice season', spring: 'Spring', summer: 'Summer', fall: 'Fall' }[p]}: ${s.ph[p][0][0]}–${s.ph[p][0][1]} m.</b> ${esc(s.ph[p][1])}</li>` : `<li><b>${{ ice: 'Ice season', spring: 'Spring', summer: 'Summer', fall: 'Fall' }[p]}:</b> not usually fished.</li>`).join('')}</ul>`}
     <p><b>${s.protected ? 'Keeping it' : 'Prep and cooking'}.</b> ${esc(s.cook)}</p>
     ${s.protected ? '' : `<p class="banner small"><b>Before you eat it:</b> mercury and other contaminants vary by lake, species and size. Children and anyone who is or may become pregnant have stricter limits. Look up this lake in the <a href="https://www.ontario.ca/page/eating-ontario-fish" target="_blank" rel="noopener">Guide to Eating Ontario Fish</a>. Smaller fish are generally the safer keepers.</p>`}
   </details></li>`).join('');
+  hookFishImages($('#fish-list'));
 }
 
 /* ===================== sheets ===================== */
@@ -1088,7 +1115,8 @@ async function boot() {
   $('#v-login').classList.add('hidden'); $('#tabs').classList.remove('hidden');
   CAM.nudge = +(localStorage.getItem('dl_nudge') || 0); CAM.fov = +(localStorage.getItem('dl_fov') || 55);
   $('#nudge').value = CAM.nudge; $('#nudge-v').textContent = `${CAM.nudge}°`; $('#fov').value = CAM.fov; $('#fov-v').textContent = `${CAM.fov}°`;
-  renderFish(); maybeIOSHint();
+  try { S.fishInfo = JSON.parse(localStorage.getItem('dl_fishinfo') || 'null'); } catch (e) {}
+  renderFish(); loadFishInfo(); maybeIOSHint();
   const last = localStorage.getItem('dl_lake');
   if (last) {
     const rec = await idb.get('lakes', last);
