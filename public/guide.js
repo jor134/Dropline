@@ -159,6 +159,7 @@ function computeGuide(lake, spKey, month, wx, catches, opts = {}) {
     out.notes.push(`This lake (max ${lakeMax.toFixed(1)} m) is shallower than where ${sp.n.toLowerCase()} usually sit now — fish the deepest water you can find.`);
     dmin = lakeMax * 0.6; dmax = lakeMax;
   }
+  if (lakeMax && dmax > lakeMax) dmax = lakeMax; // never send people deeper than the lake goes
   out.range = [Math.round(dmin * 10) / 10, Math.round(dmax * 10) / 10];
   if (sp.spawn && sp.spawn.includes(month)) out.notes.push(`${sp.n} are spawning around now. Many zones close the season — check the regulations, and leave spawning fish alone.`);
 
