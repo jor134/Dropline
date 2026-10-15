@@ -624,7 +624,7 @@ async function readBody(request) {
   try { return JSON.parse(await request.text()); } catch (e) { return {}; }
 }
 const yes = v => /^(y|yes|true|1|released|release)/i.test(String(v || '').trim());
-const firstNum = v => { const m = String(v ?? '').replace(',', '.').match(/\d+(\.\d+)?/); return m ? +m[0] : null; };
+const firstNum = v => { const m = String(v ?? '').replace(',', '.').match(/-?\d+(\.\d+)?/); return m ? +m[0] : null; };
 const metres = d => d < 1000 ? `${Math.round(d / 10) * 10} metres` : `${(d / 1000).toFixed(1)} kilometres`;
 const COMPASS_WORDS = { N: 'north', NE: 'north-east', E: 'east', SE: 'south-east', S: 'south', SW: 'south-west', W: 'west', NW: 'north-west' };
 
@@ -667,9 +667,20 @@ async function quickCatch(env, request, ctx) {
 }
 
 async function quickWhere(env, request, url, ctx) {
-  const lat = firstNum(url.searchParams.get('lat')), lngS = url.searchParams.get('lng');
-  const lng = lngS == null ? NaN : parseFloat(lngS.replace(',', '.'));
-  if (lat == null || !isFinite(lng)) return text('I need your location. Check the shortcut has Get Current Location.', 400);
+  // accept the location in the URL or in a JSON/form body, any capitalisation
+  const p = {};
+  for (const [k, v] of url.searchParams) if (k !== 'k') p[k.toLowerCase().trim()] = v;
+  if (request.method === 'POST') { const body = await readBody(request).catch(() => ({})); for (const [k, v] of Object.entries(body || {})) p[String(k).toLowerCase().trim()] = v; }
+  const pickP = (...n) => { for (const x of n) if (p[x] != null && String(p[x]).trim() !== '') return p[x]; return null; };
+  let lat = firstNum(pickP('lat', 'latitude')), lng = firstNum(pickP('lng', 'lon', 'long', 'longitude'));
+  const loc = pickP('location', 'loc', 'll');
+  if ((lat == null || lng == null) && loc) { const m = String(loc).match(/(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)/); if (m) { lat = +m[1]; lng = +m[2]; } }
+  if (lng != null && lng > 0 && lat != null && lat > 40 && lat < 57) lng = -lng; // Ontario is west of Greenwich; a lost minus sign is the usual slip
+  if (lat == null || lng == null || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    const got = Object.entries(p).map(([k, v]) => `${k}=${String(v).slice(0, 30) || '(empty)'}`).join(', ') || 'nothing';
+    return text(`I need your location as numbers. I received: ${got}. In the URL, after lat= insert Current Location and tap it to choose Latitude; after lng= choose Longitude.`, 400);
+  }
+  if (!url.searchParams.get('species') && pickP('species', 'fish')) url.searchParams.set('species', pickP('species', 'fish'));
   const lake = await detectLake(lat, lng).catch(() => null);
   if (!lake) return text('You don’t seem to be on a mapped Ontario lake, or the lake service is slow right now. Try again in a minute.');
   // Only use a depth map that's already cached; building one can take 30 seconds, far longer than a watch waits.
