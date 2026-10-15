@@ -253,7 +253,7 @@ summary{font-weight:700;min-height:44px;display:flex;align-items:center;cursor:p
   </nav>
 </div>
 
-<input type="file" id="file-photo" accept="image/*" capture="environment" class="hidden">
+<input type="file" id="file-photo" accept="image/*" class="hidden">
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script type="module">
@@ -930,7 +930,7 @@ function openWatchGuide(cfg = {}) {
       <li>Add <b>Ask for Input</b> (Text), prompt “Released?”. <b>Set Variable</b> → <b>released</b>.</li>
       <li>Add <b>Ask for Input</b> (Text), prompt “Bait or lure?”. <b>Set Variable</b> → <b>bait</b>.</li>
       <li>Add <b>Get Current Location</b>.</li>
-      <li>Add <b>Get Contents of URL</b>. URL: the web address followed by <code>/api/quick/catch</code>. Tap the arrow: Method <b>POST</b>. Headers: add <code>X-Group-Code</code> = your group code. Request Body: <b>JSON</b>, add these Text fields:
+      <li>Add <b>Get Contents of URL</b>. URL: the web address followed by <code>/api/quick/catch?k=</code> and your group code. Tap the arrow: Method <b>POST</b>, no Headers. Request Body: <b>JSON</b>, add these Text fields:
         <code>species</code> = variable species · <code>length</code> = length · <code>released</code> = released · <code>bait</code> = bait ·
         <code>angler</code> = variable angler · <code>lat</code> = Current Location, then tap it and pick <b>Latitude</b> · <code>lng</code> = Current Location › <b>Longitude</b>.</li>
       <li>Add <b>Show Result</b> with <b>Contents of URL</b>.</li>
@@ -939,11 +939,11 @@ function openWatchGuide(cfg = {}) {
     <details><summary>“Where should I fish?”</summary><ol class="small">
       <li>New shortcut named <b>Where should I fish</b>.</li>
       <li>Add <b>Get Current Location</b>.</li>
-      <li>Add <b>Get Contents of URL</b>. URL: the web address + <code>/api/quick/where?lat=</code> then insert Current Location › <b>Latitude</b>, type <code>&amp;lng=</code>, insert Current Location › <b>Longitude</b>. Headers: <code>X-Group-Code</code> = your group code.</li>
+      <li>Add <b>Get Contents of URL</b>. URL: the web address + <code>/api/quick/where?k=</code> + your group code + <code>&amp;lat=</code>, then insert Current Location › <b>Latitude</b>, type <code>&amp;lng=</code>, insert Current Location › <b>Longitude</b>. Tap the arrow: Method <b>GET</b>, no Headers, no Request Body.</li>
       <li>Optional: add <code>&amp;species=walleye</code> to the end of the URL. Without it you get the crew’s most-caught fish on that lake.</li>
       <li>Add <b>Speak Text</b> with <b>Contents of URL</b>.</li>
       <li>Tap ⓘ and turn on <b>Show on Apple Watch</b>.</li>
-    </ol></details>
+    </ol><p class="small muted">Test: run it on the iPhone first and tap <b>Always Allow</b> when asked. If it says “network connection was lost”, check there are no Headers and no Request Body.</p></details>
     <h3 style="margin-top:14px">Share them with the crew</h3>
     <p class="small">In Shortcuts, press and hold each shortcut › <b>Share</b> › <b>Copy iCloud Link</b>, then paste it here. Everyone sees one-tap buttons on their Lakes screen.</p>
     <div class="field"><label for="sc-catch">“Log a catch” link</label><input id="sc-catch" type="text" inputmode="url" placeholder="https://www.icloud.com/shortcuts/…" value="${esc(cfg.shortcutCatch || '')}"></div>
