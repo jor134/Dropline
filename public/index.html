@@ -634,7 +634,7 @@ async function renderLog() {
     return `<li><div class="li">${img}<div class="li-main"><strong>${esc(s?.n || c.species)}${c.length_cm ? ` · ${c.length_cm} cm` : ''}${c.weight_kg ? ` · ${c.weight_kg}${c.weight_est ? '≈' : ''} kg` : ''}</strong>
       <span class="small muted">${esc(c.angler)} · ${esc(c.lake || '')} · ${new Date(c.caught_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}${c.depth_m ? ` · ${c.depth_m} m` : ''}${c.bait ? ` · ${esc(c.bait)}` : ''}</span>
       <div>${c.released ? '<span class="tag saved">Released</span> ' : ''}${c.pending ? '<span class="tag pending">Not synced</span>' : ''}</div></div>
-      ${c.angler.toLowerCase() === S.me.toLowerCase() && !c.pending ? `<button class="btn sm ghost" data-delcatch="${esc(c.id)}" aria-label="Delete">✕</button>` : ''}</div></li>`;
+      <button class="btn sm ghost" data-delcatch="${esc(c.id)}" data-pending="${c.pending ? 1 : ''}" data-who="${esc(c.angler)}" data-what="${esc(s?.n || c.species)}">Delete</button></div></li>`;
   }).join('') : '<li class="muted" style="padding:14px 4px">No catches logged yet. The first one sets the bar.</li>';
 }
 function fishArt(s) {
@@ -989,9 +989,19 @@ $('#fish-list').addEventListener('click', e => {
 });
 $('#log-filter').onchange = renderLog;
 $('#log-list').addEventListener('click', async e => {
-  const id = e.target.closest('[data-delcatch]')?.dataset.delcatch; if (!id) return;
-  if (!confirm('Delete this catch for everyone?')) return;
-  try { await api('/api/catches/' + encodeURIComponent(id), { method: 'DELETE' }); toast('Deleted'); if (S.lake) await loadCatches(); renderLog(); } catch (err) { toast(err.message); }
+  const b = e.target.closest('[data-delcatch]'); if (!b) return;
+  const { delcatch: id, pending, who, what } = b.dataset;
+  if (pending) {
+    if (!confirm(`Delete this ${what.toLowerCase()}? It hasn’t synced yet, so only this phone has it.`)) return;
+    await idb.del('outbox', id); toast('Deleted');
+  } else {
+    const mine = (who || '').replace(/[.!?,;:]+$/, '').trim().toLowerCase() === S.me.trim().toLowerCase();
+    if (!confirm(mine ? `Delete your ${what.toLowerCase()} for everyone in the crew?` : `This is ${who}’s ${what.toLowerCase()}. Delete it for everyone in the crew?`)) return;
+    if (!navigator.onLine) { toast('Needs signal to delete a synced catch.'); return; }
+    try { await api('/api/catches/' + encodeURIComponent(id), { method: 'DELETE' }); toast('Deleted'); } catch (err) { toast(err.message); return; }
+  }
+  if (S.lake) { await loadCatches(); const rec = await idb.get('lakes', S.lake.lid); if (rec) await saveOffline(true); }
+  renderLog(); if (map && S.lake) renderMap();
 });
 window.addEventListener('online', () => { syncOutbox(); toast('Back online'); });
 window.addEventListener('offline', () => toast('Offline — saved lakes still work'));
