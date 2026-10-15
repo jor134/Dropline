@@ -489,10 +489,9 @@ async function addCatch(db, b) {
 }
 
 async function deleteCatch(db, id, request) {
-  const angler = request.headers.get('X-Angler') || '';
+  // any crew member can delete (the app asks for confirmation, with a stronger warning for someone else's catch)
   const row = await db.prepare('SELECT angler FROM catches WHERE id = ?').bind(id).first();
   if (!row) return json({ ok: true });
-  if (row.angler.toLowerCase() !== angler.toLowerCase()) return json({ error: 'Only the person who logged this catch can delete it' }, 403);
   await db.batch([
     db.prepare('DELETE FROM catches WHERE id = ?').bind(id),
     db.prepare('DELETE FROM photos WHERE id = ?').bind(id),
@@ -641,7 +640,8 @@ async function quickCatch(env, request, ctx) {
   if (!speciesIn) return text(`I didn't get a fish name. The shortcut sent: ${sent}. In Get Contents of URL, the "species" field needs the species variable (blue chip), not typed text.`, 400);
   const sp = matchSpecies(speciesIn);
   if (!sp) return text(`I didn't recognise "${String(speciesIn).slice(0, 40)}". Try walleye, pike, bass, perch, crappie or trout.`, 400);
-  const angler = String(pickF('angler', 'name', 'who', 'caughtby') || '').trim();
+  // dictation adds trailing punctuation ("Jordan.") — strip it and capitalise
+  const angler = String(pickF('angler', 'name', 'who', 'caughtby') || '').trim().replace(/[.!?,;:]+$/, '').trim().replace(/^./, c => c.toUpperCase());
   if (!angler) return text(`I didn't get who caught it. The shortcut sent: ${sent}.`, 400);
   b.length = pickF('length', 'length_cm', 'size', 'cm'); b.released = pickF('released', 'release'); b.bait = pickF('bait', 'lure');
   b.depth = pickF('depth', 'depth_m'); b.notes = pickF('notes', 'note');
